@@ -24,6 +24,7 @@ const INITIAL_STEMS: StemState[] = [
   { kind: "melody", label: "MELODY", file: null, buffer: null, gain: 1, muted: false, solo: false, semitoneOffset: 0 },
   { kind: "other", label: "OTHER", file: null, buffer: null, gain: 1, muted: false, solo: false, semitoneOffset: 0 },
 ];
+const SEMITONES = Array.from({ length: 25 }, (_, index) => index - 12);
 
 function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -32,6 +33,15 @@ function downloadBlob(blob: Blob, name: string) {
   anchor.download = name;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function VintageProgress({ label }: { label: string }) {
+  return (
+    <div className="vintageProgress" role="status" aria-live="polite">
+      <span>{label}</span>
+      <div className="progressTrack"><div className="progressBlocks" /></div>
+    </div>
+  );
 }
 
 async function renderMix(stems: StemState[], sourceBpm: number, targetBpm: number, globalPitchShift: number) {
@@ -43,8 +53,8 @@ async function renderMix(stems: StemState[], sourceBpm: number, targetBpm: numbe
   if (!active.length) throw new Error("No audible stems selected");
 
   const processed = await Promise.all(active.map(async (stem) => {
-    const tonal = stem.kind !== "drums";
-    const semitones = tonal ? globalPitchShift + stem.semitoneOffset : stem.semitoneOffset;
+    const globalShift = stem.kind === "drums" ? 0 : globalPitchShift;
+    const semitones = globalShift + stem.semitoneOffset;
     const unchanged = Math.abs(sourceBpm - targetBpm) < 0.001 && semitones === 0;
     const buffer = unchanged
       ? stem.buffer!
@@ -79,7 +89,7 @@ export function StemEditor() {
   const [mixBuffer, setMixBuffer] = useState<AudioBuffer | null>(null);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [message, setMessage] = useState("ADD SEPARATED STEMS TO EDIT THE BEAT");
+  const [message, setMessage] = useState("ADD AUDIO TRACKS TO EDIT THE BEAT");
   const playbackRef = useRef<DrumPlayback | null>(null);
 
   const loadedCount = useMemo(() => stems.filter((stem) => stem.buffer).length, [stems]);
@@ -152,26 +162,24 @@ export function StemEditor() {
 
   return (
     <section className="module stemEditorModule">
-      <div className="moduleTitle">05 // STEM EDITOR // MANUAL STEMS BETA</div>
+      <div className="moduleTitle">EDIT // MULTITRACK WORKSPACE</div>
       <div className="stemEditorIntro">
-        Upload separated drum/bass/melody/other stems, edit each layer, preview the combined mix, then export one WAV. Automatic stem splitting is still the next backend step.
+        Drop in any available stems, shape each layer, preview the combined edit, then export one WAV. Automatic separation from a full beat is a separate backend step.
       </div>
 
       <div className="editorMasterControls">
         <label><span>SOURCE BPM</span><input type="number" min="20" max="300" step="0.1" value={sourceBpm} onChange={(event) => { setSourceBpm(+event.target.value); invalidate(); }} /></label>
         <label><span>TARGET BPM</span><input type="number" min="20" max="300" step="0.1" value={targetBpm} onChange={(event) => { setTargetBpm(+event.target.value); invalidate(); }} /></label>
-        <label><span>GLOBAL KEY SHIFT</span><select value={globalPitchShift} onChange={(event) => { setGlobalPitchShift(+event.target.value); invalidate(); }}>{Array.from({ length: 25 }, (_, i) => i - 12).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} semitones</option>)}</select></label>
+        <label><span>GLOBAL TONAL SHIFT</span><select value={globalPitchShift} onChange={(event) => { setGlobalPitchShift(+event.target.value); invalidate(); }}>{SEMITONES.map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} semitones</option>)}</select></label>
       </div>
 
       <div className="stemRows">
         {stems.map((stem) => (
           <div className="stemRow" key={stem.kind}>
-            <div className="stemName"><b>{stem.label}</b><span>{stem.file?.name ?? "NO STEM"}</span></div>
+            <div className="stemName"><b>{stem.label}</b><span>{stem.file?.name ?? "NO TRACK"}</span></div>
             <label className="stemUploadButton"><Upload size={13} /> {stem.buffer ? "REPLACE" : "ADD"}<input type="file" accept="audio/*" hidden disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadStem(stem.kind, file); event.currentTarget.value = ""; }} /></label>
             <label className="stemSlider"><span>LEVEL {Math.round(stem.gain * 100)}%</span><input type="range" min="0" max="1.5" step="0.01" value={stem.gain} disabled={!stem.buffer} onChange={(event) => updateStem(stem.kind, { gain: +event.target.value })} /></label>
-            {stem.kind !== "drums" ? (
-              <label className="stemPitch"><span>EXTRA SHIFT</span><select value={stem.semitoneOffset} disabled={!stem.buffer} onChange={(event) => updateStem(stem.kind, { semitoneOffset: +event.target.value })}>{Array.from({ length: 25 }, (_, i) => i - 12).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} st</option>)}</select></label>
-            ) : <div className="stemPitch passive"><span>PITCH</span><b>KEEP</b></div>}
+            <label className="stemPitch"><span>{stem.kind === "drums" ? "DRUM PITCH" : "EXTRA SHIFT"}</span><select value={stem.semitoneOffset} disabled={!stem.buffer} onChange={(event) => updateStem(stem.kind, { semitoneOffset: +event.target.value })}>{SEMITONES.map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} st</option>)}</select></label>
             <button className={stem.muted ? "stemToggle active" : "stemToggle"} disabled={!stem.buffer} onClick={() => updateStem(stem.kind, { muted: !stem.muted })}>MUTE</button>
             <button className={stem.solo ? "stemToggle active" : "stemToggle"} disabled={!stem.buffer} onClick={() => updateStem(stem.kind, { solo: !stem.solo })}>SOLO</button>
           </div>
@@ -179,8 +187,8 @@ export function StemEditor() {
       </div>
 
       <div className="stemEditorFooter">
-        <div className="lcdStatus"><i className={busy ? "blink" : ""} /> {message}</div>
-        <button className="processButton" disabled={!loadedCount || busy} onClick={() => void buildMix()}><Wand2 size={15} /> {busy ? "RENDERING…" : "BUILD MIX PREVIEW"}</button>
+        {busy ? <VintageProgress label={message} /> : <div className="lcdStatus">{message}</div>}
+        <button className="processButton" disabled={!loadedCount || busy} onClick={() => void buildMix()}><Wand2 size={15} /> {busy ? "PROCESSING…" : "BUILD MIX PREVIEW"}</button>
         <button className="abPlayButton rebuilt" disabled={!mixBuffer} onClick={playMix}>{playing ? <Pause size={14} /> : <Play size={14} />}{playing ? "STOP MIX" : "PLAY EDITED MIX"}</button>
         <button className="exportButton primaryExport" disabled={!mixBuffer} onClick={exportMix}><Download size={14} /> EXPORT EDITED WAV</button>
       </div>
