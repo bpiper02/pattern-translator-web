@@ -4,6 +4,7 @@ import { decodeAudio } from "../audio";
 import { transformAudio } from "../audio/transformAudio";
 import { audioBufferToWav } from "../audio/wav";
 import { playRenderedPreview, type DrumPlayback } from "../audio/reconstructDrums";
+import { DraftNumberInput } from "./DraftNumberInput";
 
 type StemKind = "drums" | "bass" | "melody" | "other";
 
@@ -168,8 +169,8 @@ export function StemEditor() {
       </div>
 
       <div className="editorMasterControls">
-        <label><span>SOURCE BPM</span><input type="number" min="20" max="300" step="0.1" value={sourceBpm} onChange={(event) => { setSourceBpm(+event.target.value); invalidate(); }} /></label>
-        <label><span>TARGET BPM</span><input type="number" min="20" max="300" step="0.1" value={targetBpm} onChange={(event) => { setTargetBpm(+event.target.value); invalidate(); }} /></label>
+        <label><span>SOURCE BPM</span><DraftNumberInput value={sourceBpm} min={20} max={300} step={0.1} onCommit={(value) => { setSourceBpm(value); invalidate(); }} ariaLabel="Editor source BPM" /></label>
+        <label><span>TARGET BPM</span><DraftNumberInput value={targetBpm} min={20} max={300} step={0.1} onCommit={(value) => { setTargetBpm(value); invalidate(); }} ariaLabel="Editor target BPM" /></label>
         <label><span>GLOBAL TONAL SHIFT</span><select value={globalPitchShift} onChange={(event) => { setGlobalPitchShift(+event.target.value); invalidate(); }}>{SEMITONES.map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} semitones</option>)}</select></label>
       </div>
 
