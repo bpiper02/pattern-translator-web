@@ -7,8 +7,10 @@ export type AutoKitResult = {
   lanes: Partial<Record<AutoKitLane, AudioBuffer>>;
   counts: Record<AutoKitLane, number>;
   totalOnsets: number;
+  sourcePattern: Record<AutoKitLane, boolean[]>;
 };
 
+const STEPS = 16;
 const LANE_BY_ANALYSIS_INDEX: AutoKitLane[] = ["KICK", "SNARE", "PERC", "HAT"];
 
 function copySlice(source: AudioBuffer, startSeconds: number, endSeconds: number): AudioBuffer {
@@ -42,9 +44,21 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
   const grouped = new Map<AutoKitLane, typeof hits>();
   for (const lane of LANE_BY_ANALYSIS_INDEX) grouped.set(lane, []);
 
+  const sourcePattern = {
+    KICK: Array(STEPS).fill(false),
+    SNARE: Array(STEPS).fill(false),
+    HAT: Array(STEPS).fill(false),
+    PERC: Array(STEPS).fill(false),
+  } as Record<AutoKitLane, boolean[]>;
+
   for (const hit of hits) {
     const lane = LANE_BY_ANALYSIS_INDEX[Math.max(0, Math.min(LANE_BY_ANALYSIS_INDEX.length - 1, hit.lane))];
     grouped.get(lane)!.push(hit);
+
+    if (hit.beat >= 0 && hit.beat < 4) {
+      const step = Math.max(0, Math.min(STEPS - 1, Math.round(hit.beat * 4)));
+      sourcePattern[lane][step] = true;
+    }
   }
 
   const lanes: Partial<Record<AutoKitLane, AudioBuffer>> = {};
@@ -55,7 +69,6 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
     counts[lane] = candidates.length;
     if (!candidates.length) continue;
 
-    // Prefer a strong, isolated transient rather than blindly taking the first hit.
     const ordered = [...candidates].sort((a, b) => b.velocity - a.velocity);
     const selected = ordered[0];
     const chronological = [...hits].sort((a, b) => a.time - b.time);
@@ -69,5 +82,5 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
     lanes[lane] = copySlice(source, start, end);
   }
 
-  return { lanes, counts, totalOnsets: hits.length };
+  return { lanes, counts, totalOnsets: hits.length, sourcePattern };
 }
