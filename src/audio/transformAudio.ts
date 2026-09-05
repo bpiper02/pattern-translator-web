@@ -20,6 +20,10 @@ export async function transformAudio({
 
   const playbackRate = targetBpm / sourceBpm;
 
+  if (Math.abs(playbackRate - 1) < 0.000001 && semitones === 0) {
+    return input;
+  }
+
   return processOffline({
     input,
     processorUrl,
