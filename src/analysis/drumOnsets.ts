@@ -65,33 +65,60 @@ function median(values: number[]) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm: number): DrumHit[] {
-  const essentia = getEssentia();
-  const analysis = resampleLinear(samples, sampleRate, ANALYSIS_SR);
-  const signal = essentia.arrayToVector(analysis);
-  let onsetVector: any | null = null;
+function vectorLength(vector: any): number {
+  if (!vector) return 0;
+  if (typeof vector.size === "function") return Number(vector.size());
+  if (typeof vector.length === "number") return vector.length;
+  return 0;
+}
 
+function runSuperFlux(essentia: any, signal: any, ratioThreshold: number, threshold: number): number[] {
+  let onsetVector: any | null = null;
   try {
     const result = essentia.SuperFluxExtractor(
       signal,
       35,
       2048,
       256,
-      18,
+      ratioThreshold,
       ANALYSIS_SR,
-      0.11,
+      threshold,
     );
     onsetVector = result.onsets;
-    const onsetTimes = Array.from(essentia.vectorToArray(onsetVector) as Float32Array) as number[];
+    if (!vectorLength(onsetVector)) return [];
+    return Array.from(essentia.vectorToArray(onsetVector) as Float32Array) as number[];
+  } finally {
+    onsetVector?.delete?.();
+  }
+}
+
+export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm: number): DrumHit[] {
+  if (!samples.length || !Number.isFinite(sampleRate) || sampleRate <= 0) return [];
+
+  const essentia = getEssentia();
+  const analysis = resampleLinear(samples, sampleRate, ANALYSIS_SR);
+  if (!analysis.length) return [];
+
+  const signal = essentia.arrayToVector(analysis);
+
+  try {
+    // First pass: near Essentia defaults. If the signal is unusually soft/sparse,
+    // retry with a more permissive peak picker instead of crashing on an empty vector.
+    let onsetTimes = runSuperFlux(essentia, signal, 16, 0.05);
+    if (!onsetTimes.length) onsetTimes = runSuperFlux(essentia, signal, 8, 0.02);
     if (!onsetTimes.length) return [];
 
-    const candidates = onsetTimes.map((time) => ({ time, ...transientFeatures(samples, sampleRate, time) }));
+    const candidates = onsetTimes
+      .filter((time) => Number.isFinite(time) && time >= 0 && time <= samples.length / sampleRate)
+      .map((time) => ({ time, ...transientFeatures(samples, sampleRate, time) }));
+    if (!candidates.length) return [];
+
     const scoreMedian = median(candidates.map((x) => x.score));
-    const scoreFloor = Math.max(0.002, scoreMedian * 0.32);
-    const gated = candidates.filter((x) => x.score >= scoreFloor);
+    const scoreFloor = Math.max(0.0015, scoreMedian * 0.45);
+    const gated = candidates.filter((x) => x.score >= scoreFloor && x.peak >= 0.01);
 
     const deduped: typeof gated = [];
-    const minGap = 0.042;
+    const minGap = 0.055;
     for (const item of gated) {
       const prev = deduped[deduped.length - 1];
       if (!prev || item.time - prev.time >= minGap) {
@@ -123,7 +150,6 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
       velocity: Math.max(48, Math.min(127, Math.round(48 + 79 * Math.sqrt(item.score / maxScore)))),
     }));
   } finally {
-    onsetVector?.delete?.();
     signal.delete?.();
   }
 }
