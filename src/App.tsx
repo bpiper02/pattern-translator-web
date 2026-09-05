@@ -1,320 +1,448 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Upload, Play, Pause, Download, Drum, Music2, RotateCcw,
-  Sparkles, SlidersHorizontal, Plus, Minus, Trash2
+  Download,
+  Drum,
+  Music2,
+  Pause,
+  Play,
+  RotateCcw,
+  Scissors,
+  SlidersHorizontal,
+  Upload,
+  Wand2,
 } from "lucide-react";
 import {
-  decodeAudio, monoSamples, estimateBpm, detectDrums, detectBass,
-  transposeNotes, midiNoteName, type DrumHit, type BassNote
+  decodeAudio,
+  monoSamples,
+  detectDrums,
+  detectBass,
+  transposeNotes,
+  midiNoteName,
+  type DrumHit,
+  type BassNote,
 } from "./audio";
 import { drumsMidi, bassMidi } from "./midi";
+import { analyzeRhythm, secondsToBeatPosition, type RhythmAnalysis } from "./analysis/rhythm";
+import {
+  extractDrumSlices,
+  playDrumRebuild,
+  type DrumPlayback,
+  type DrumSlice,
+} from "./audio/reconstructDrums";
 
 type Mode = "drums" | "bass";
-const ROOTS = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const AUTO_DRUM_LANES = 4;
 
 function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = name; a.click();
+  a.href = url;
+  a.download = name;
+  a.click();
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
 function Waveform({ samples, currentRatio }: { samples: Float32Array | null; currentRatio: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const c = ref.current;
-    if (!c || !samples) return;
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const rect = c.getBoundingClientRect();
-    c.width = rect.width * dpr;
-    c.height = rect.height * dpr;
-    const ctx = c.getContext("2d")!;
-    ctx.scale(dpr,dpr);
-    ctx.clearRect(0,0,rect.width,rect.height);
 
-    const mid = rect.height/2;
-    const step = Math.ceil(samples.length / rect.width);
-    ctx.strokeStyle = "rgba(255,255,255,.62)";
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas || !samples) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d")!;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const mid = rect.height / 2;
+    const step = Math.ceil(samples.length / Math.max(1, rect.width));
+    ctx.strokeStyle = "#b8c6b1";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let x=0; x<rect.width; x++) {
-      let min=1,max=-1;
-      const start=x*step, end=Math.min(samples.length,start+step);
-      for (let i=start;i<end;i++){ const v=samples[i]; if(v<min)min=v;if(v>max)max=v; }
-      ctx.moveTo(x, mid + min*mid*.82);
-      ctx.lineTo(x, mid + max*mid*.82);
+
+    for (let x = 0; x < rect.width; x++) {
+      let min = 1;
+      let max = -1;
+      const start = x * step;
+      const end = Math.min(samples.length, start + step);
+      for (let i = start; i < end; i++) {
+        const value = samples[i];
+        if (value < min) min = value;
+        if (value > max) max = value;
+      }
+      ctx.moveTo(x, mid + min * mid * 0.82);
+      ctx.lineTo(x, mid + max * mid * 0.82);
     }
     ctx.stroke();
 
     if (currentRatio > 0) {
-      ctx.strokeStyle = "rgba(255,255,255,.95)";
+      ctx.strokeStyle = "#ffb000";
       ctx.lineWidth = 2;
       const x = rect.width * currentRatio;
-      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,rect.height); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, rect.height);
+      ctx.stroke();
     }
-  }, [samples,currentRatio]);
+  }, [samples, currentRatio]);
 
   return <canvas ref={ref} className="wave" />;
 }
 
-function DrumGrid({ hits, lanes, onToggle }: {
-  hits: DrumHit[]; lanes: number; onToggle: (lane:number, beat:number)=>void
-}) {
-  const maxBeat = Math.max(8, Math.ceil((Math.max(0,...hits.map(h=>h.beat))+1)/4)*4);
-  const steps = maxBeat*4;
+function DrumPattern({ hits }: { hits: DrumHit[] }) {
+  const windowBeats = 16;
   return (
-    <div className="gridScroll">
-      <div className="drumGrid" style={{minWidth: Math.max(760, steps*28)}}>
-        <div className="barRow">
-          <div className="laneLabel ghost"></div>
-          {Array.from({length:maxBeat},(_,b)=>
-            <div className={"beatLabel "+(b%4===0?"barStart":"")} key={b}>{(b%4)+1}</div>
-          )}
-        </div>
-        {Array.from({length:lanes},(_,lane)=>
-          <div className="laneRow" key={lane}>
-            <div className="laneLabel">{String.fromCharCode(65+lane)}</div>
-            <div className="steps">
-              {Array.from({length:steps},(_,i)=>{
-                const beat=i/4;
-                const hit=hits.find(h=>h.lane===lane && Math.abs(h.beat-beat)<0.06);
-                return <button
-                  key={i}
-                  className={"step "+(i%4===0?"quarter ":"")+(hit?"active":"")}
-                  title={`Lane ${String.fromCharCode(65+lane)} · beat ${beat.toFixed(2)}`}
-                  onClick={()=>onToggle(lane,beat)}
-                />;
-              })}
+    <div className="patternPanel">
+      <div className="ruler">
+        <span />
+        {[1, 2, 3, 4].map((bar) => <b key={bar}>BAR {bar}</b>)}
+      </div>
+      {Array.from({ length: AUTO_DRUM_LANES }, (_, lane) => {
+        const laneHits = hits.filter((hit) => hit.lane === lane && hit.beat >= 0 && hit.beat < windowBeats);
+        return (
+          <div className="patternLane" key={lane}>
+            <span className="laneName">{String.fromCharCode(65 + lane)}</span>
+            <div className="laneTrack">
+              <i className="barLine b1" />
+              <i className="barLine b2" />
+              <i className="barLine b3" />
+              {laneHits.map((hit) => (
+                <button
+                  key={hit.id}
+                  className="eventLamp"
+                  style={{ left: `${Math.max(0, Math.min(99.2, (hit.beat / windowBeats) * 100))}%` }}
+                  title={`Beat ${hit.beat.toFixed(3)} · velocity ${hit.velocity}`}
+                />
+              ))}
             </div>
           </div>
-        )}
-      </div>
+        );
+      })}
+      <div className="patternHint">First 4 bars · exact microtiming retained · no forced grid</div>
     </div>
   );
 }
 
-function BassGrid({ notes, onDelete }: { notes:BassNote[]; onDelete:(id:string)=>void }) {
-  if (!notes.length) return <div className="emptyGrid">No bass notes detected yet.</div>;
-  const min = Math.max(24, Math.min(...notes.map(n=>n.midi))-2);
-  const max = Math.min(72, Math.max(...notes.map(n=>n.midi))+2);
-  const maxBeat = Math.max(8, Math.ceil((Math.max(...notes.map(n=>n.beat+n.durationBeats))+1)/4)*4);
-  const rows = max-min+1;
-  return <div className="gridScroll">
-    <div className="pianoGrid" style={{minWidth: Math.max(760,maxBeat*112), height: rows*28}}>
-      {Array.from({length:rows},(_,r)=>{
-        const midi=max-r;
-        return <div className="pitchRow" key={midi} style={{top:r*28}}>
-          <span>{midiNoteName(midi)}</span>
-        </div>
-      })}
-      {Array.from({length:maxBeat*4},(_,i)=>
-        <div className={"vline "+(i%4===0?"major":"")} key={i} style={{left:`${(i/(maxBeat*4))*100}%`}}/>
-      )}
-      {notes.map(n=>{
-        const top=(max-n.midi)*28+4;
-        const left=(n.beat/maxBeat)*100;
-        const width=Math.max(.7,(n.durationBeats/maxBeat)*100);
-        return <button className="bassNote" key={n.id}
-          style={{top,left:`${left}%`,width:`${width}%`}}
-          onClick={()=>onDelete(n.id)}
-          title={`${midiNoteName(n.midi)} · ${n.beat.toFixed(2)} beats · click to remove`}
-        >{midiNoteName(n.midi)}</button>
-      })}
-    </div>
-  </div>
-}
-
 export function App() {
-  const [mode,setMode]=useState<Mode>("drums");
-  const [file,setFile]=useState<File|null>(null);
-  const [buffer,setBuffer]=useState<AudioBuffer|null>(null);
-  const [samples,setSamples]=useState<Float32Array|null>(null);
-  const [sourceBpm,setSourceBpm]=useState(122);
-  const [targetBpm,setTargetBpm]=useState(61);
-  const [sensitivity,setSensitivity]=useState(.55);
-  const [lanes,setLanes]=useState(3);
-  const [quantize,setQuantize]=useState(.25);
-  const [drumHits,setDrumHits]=useState<DrumHit[]>([]);
-  const [bassNotes,setBassNotes]=useState<BassNote[]>([]);
-  const [sourceRoot,setSourceRoot]=useState("C");
-  const [targetRoot,setTargetRoot]=useState("F#");
-  const [busy,setBusy]=useState(false);
-  const [drag,setDrag]=useState(false);
-  const [playing,setPlaying]=useState(false);
-  const [ratio,setRatio]=useState(0);
-  const audioRef=useRef<HTMLAudioElement|null>(null);
-  const inputRef=useRef<HTMLInputElement|null>(null);
+  const [mode, setMode] = useState<Mode>("drums");
+  const [file, setFile] = useState<File | null>(null);
+  const [buffer, setBuffer] = useState<AudioBuffer | null>(null);
+  const [samples, setSamples] = useState<Float32Array | null>(null);
+  const [rhythm, setRhythm] = useState<RhythmAnalysis | null>(null);
+  const [sourceBpm, setSourceBpm] = useState(120);
+  const [targetBpm, setTargetBpm] = useState(120);
+  const [sourceRoot, setSourceRoot] = useState("C");
+  const [targetRoot, setTargetRoot] = useState("C");
+  const [drumHits, setDrumHits] = useState<DrumHit[]>([]);
+  const [drumSlices, setDrumSlices] = useState<DrumSlice[]>([]);
+  const [bassNotes, setBassNotes] = useState<BassNote[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [drag, setDrag] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [ratio, setRatio] = useState(0);
+  const [message, setMessage] = useState("READY — DROP A CLEAN STEM");
 
-  const semitone = ROOTS.indexOf(targetRoot)-ROOTS.indexOf(sourceRoot);
-  const transformedBass = useMemo(()=>transposeNotes(bassNotes,semitone),[bassNotes,semitone]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const rebuiltPlaybackRef = useRef<DrumPlayback | null>(null);
 
-  async function ingest(f:File) {
+  const semitone = ROOTS.indexOf(targetRoot) - ROOTS.indexOf(sourceRoot);
+  const transformedBass = useMemo(() => transposeNotes(bassNotes, semitone), [bassNotes, semitone]);
+
+  function stopPlayback() {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+    rebuiltPlaybackRef.current?.stop();
+    rebuiltPlaybackRef.current = null;
+    setPlaying(false);
+    setRatio(0);
+  }
+
+  function clearAnalysis() {
+    setDrumHits([]);
+    setDrumSlices([]);
+    setBassNotes([]);
+  }
+
+  async function ingest(nextFile: File) {
+    stopPlayback();
+    clearAnalysis();
     setBusy(true);
+    setMessage("DECODING + TRACKING TEMPO…");
+
     try {
-      const b=await decodeAudio(f);
-      const s=monoSamples(b);
-      setFile(f); setBuffer(b); setSamples(s);
-      setSourceBpm(estimateBpm(s,b.sampleRate));
-      setDrumHits([]); setBassNotes([]);
-    } catch(e) {
-      alert("Couldn't read that file. WAV/MP3/M4A usually work best in Chrome.");
-    } finally { setBusy(false); }
+      const decoded = await decodeAudio(nextFile);
+      const mono = monoSamples(decoded);
+      const rhythmResult = analyzeRhythm(mono, decoded.sampleRate);
+      const detectedBpm = Math.round(rhythmResult.bpm * 10) / 10;
+
+      setFile(nextFile);
+      setBuffer(decoded);
+      setSamples(mono);
+      setRhythm(rhythmResult);
+      setSourceBpm(detectedBpm);
+      setTargetBpm(detectedBpm);
+      setMessage(`READY — ${rhythmResult.beats.length} BEATS TRACKED`);
+    } catch (error) {
+      console.error(error);
+      setMessage("ERROR — COULD NOT READ AUDIO");
+      alert("Couldn't analyze that file. WAV/MP3/M4A work best in Chrome.");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function analyze() {
-    if(!samples||!buffer)return;
+  async function processStem() {
+    if (!samples || !buffer) return;
     setBusy(true);
-    await new Promise(r=>setTimeout(r,40));
-    if(mode==="drums"){
-      setDrumHits(detectDrums(samples,buffer.sampleRate,sourceBpm,sensitivity,lanes,quantize));
-    } else {
-      setBassNotes(detectBass(samples,buffer.sampleRate,sourceBpm,quantize));
-    }
-    setBusy(false);
-  }
+    setMessage(mode === "drums" ? "EXTRACTING DRUM EVENTS…" : "TRANSCRIBING BASS…");
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
-  function toggleDrum(lane:number,beat:number){
-    const existing=drumHits.find(h=>h.lane===lane&&Math.abs(h.beat-beat)<.06);
-    if(existing)setDrumHits(drumHits.filter(h=>h.id!==existing.id));
-    else setDrumHits([...drumHits,{id:crypto.randomUUID(),time:beat*60/sourceBpm,beat,lane,velocity:95}].sort((a,b)=>a.beat-b.beat));
-  }
+    try {
+      if (mode === "drums") {
+        const rawHits = detectDrums(
+          samples,
+          buffer.sampleRate,
+          sourceBpm,
+          0.62,
+          AUTO_DRUM_LANES,
+          null,
+        );
 
-  function exportMidi(){
-    if(mode==="drums"){
-      downloadBlob(drumsMidi(drumHits,targetBpm),`drums-${targetBpm}bpm.mid`);
-    }else{
-      downloadBlob(bassMidi(transformedBass,targetBpm),`bass-${targetRoot}-${targetBpm}bpm.mid`);
-    }
-  }
+        const alignedHits = rhythm && rhythm.beats.length > 1
+          ? rawHits.map((hit) => ({ ...hit, beat: secondsToBeatPosition(hit.time, rhythm.beats) }))
+          : rawHits;
 
-  function playOriginal(){
-    if(!file)return;
-    if(!audioRef.current){
-      audioRef.current=new Audio(URL.createObjectURL(file));
-      audioRef.current.ontimeupdate=()=>{
-        const a=audioRef.current!;
-        setRatio(a.duration? a.currentTime/a.duration:0);
-      };
-      audioRef.current.onended=()=>{setPlaying(false);setRatio(0)};
-    }
-    const a=audioRef.current;
-    if(playing){a.pause();setPlaying(false)} else {a.play();setPlaying(true)}
-  }
-
-  return <main>
-    <header className="topbar">
-      <div>
-        <div className="brand">Pattern Translator</div>
-        <div className="subtitle">Reference groove → your BPM/key → editable MIDI.</div>
-      </div>
-      <div className="privacy">LOCAL PROCESSING</div>
-    </header>
-
-    <section className="hero">
-      <div className="modeSwitch">
-        <button className={mode==="drums"?"selected":""} onClick={()=>setMode("drums")}><Drum size={17}/> Drums</button>
-        <button className={mode==="bass"?"selected":""} onClick={()=>setMode("bass")}><Music2 size={17}/> Bass</button>
-      </div>
-
-      {!file ? <div
-        className={"drop "+(drag?"drag":"")}
-        onDragOver={e=>{e.preventDefault();setDrag(true)}}
-        onDragLeave={()=>setDrag(false)}
-        onDrop={e=>{e.preventDefault();setDrag(false); const f=e.dataTransfer.files[0]; if(f)ingest(f)}}
-        onClick={()=>inputRef.current?.click()}
-      >
-        <input ref={inputRef} type="file" accept="audio/*" hidden onChange={e=>e.target.files?.[0]&&ingest(e.target.files[0])}/>
-        <div className="dropIcon"><Upload size={24}/></div>
-        <strong>Drop a {mode==="drums"?"drum":"bass"} stem</strong>
-        <span>WAV, MP3, M4A • processed in your browser</span>
-      </div> :
-      <>
-        <div className="transport">
-          <button className="playBtn" onClick={playOriginal}>{playing?<Pause size={18}/>:<Play size={18}/>}</button>
-          <div className="fileMeta">
-            <strong>{file.name}</strong>
-            <span>{buffer?.duration.toFixed(1)}s · {buffer?.sampleRate.toLocaleString()} Hz</span>
-          </div>
-          <button className="textBtn" onClick={()=>{setFile(null);setSamples(null);setBuffer(null);setDrumHits([]);setBassNotes([])}}><RotateCcw size={15}/> Replace</button>
-        </div>
-        <Waveform samples={samples} currentRatio={ratio}/>
-      </>}
-
-      <div className="controls">
-        <div className="controlCard">
-          <label>SOURCE BPM</label>
-          <input type="number" value={sourceBpm} onChange={e=>setSourceBpm(+e.target.value)} min="20" max="300" step=".1"/>
-          <small>Editable for half/double-time mistakes</small>
-        </div>
-        <div className="arrow">→</div>
-        <div className="controlCard target">
-          <label>TARGET BPM</label>
-          <input type="number" value={targetBpm} onChange={e=>setTargetBpm(+e.target.value)} min="20" max="300" step=".1"/>
-          <small>MIDI timing is rebuilt, not stretched</small>
-        </div>
-        {mode==="bass" && <>
-          <div className="keyBox">
-            <label>SOURCE ROOT</label>
-            <select value={sourceRoot} onChange={e=>setSourceRoot(e.target.value)}>{ROOTS.map(r=><option key={r}>{r}</option>)}</select>
-          </div>
-          <div className="arrow">→</div>
-          <div className="keyBox targetKey">
-            <label>TARGET ROOT</label>
-            <select value={targetRoot} onChange={e=>setTargetRoot(e.target.value)}>{ROOTS.map(r=><option key={r}>{r}</option>)}</select>
-          </div>
-        </>}
-      </div>
-
-      <div className="analysisBar">
-        <div className="analysisControls">
-          {mode==="drums" && <>
-            <label>LANES <b>{lanes}</b><input type="range" min="1" max="6" value={lanes} onChange={e=>setLanes(+e.target.value)}/></label>
-            <label>SENSITIVITY <b>{Math.round(sensitivity*100)}%</b><input type="range" min="0" max="1" step=".05" value={sensitivity} onChange={e=>setSensitivity(+e.target.value)}/></label>
-          </>}
-          <label>GRID
-            <select value={quantize} onChange={e=>setQuantize(+e.target.value)}>
-              <option value=".25">1/16</option>
-              <option value=".5">1/8</option>
-              <option value=".125">1/32</option>
-              <option value="1">1/4</option>
-            </select>
-          </label>
-        </div>
-        <button className="analyzeBtn" disabled={!file||busy} onClick={analyze}>
-          <Sparkles size={17}/>{busy?"Analyzing…":`Analyze ${mode}`}
-        </button>
-      </div>
-    </section>
-
-    <section className="editor">
-      <div className="editorHead">
-        <div>
-          <span className="eyebrow">PATTERN</span>
-          <h2>{mode==="drums"?"Drum lanes":"Bass piano roll"}</h2>
-          <p>{mode==="drums"
-            ?"A/B/C are repeating sound classes. Click any cell to add or remove a hit."
-            :"Detected notes are transposed non-destructively to the target root. Click a note to remove it."}</p>
-        </div>
-        <div className="editorActions">
-          <button onClick={()=>mode==="drums"?setDrumHits([]):setBassNotes([])}><Trash2 size={15}/> Clear</button>
-          <button className="export" disabled={mode==="drums"?drumHits.length===0:transformedBass.length===0} onClick={exportMidi}><Download size={16}/> Export MIDI</button>
-        </div>
-      </div>
-
-      {mode==="drums"
-        ? <DrumGrid hits={drumHits} lanes={lanes} onToggle={toggleDrum}/>
-        : <BassGrid notes={transformedBass} onDelete={id=>setBassNotes(bassNotes.filter(n=>n.id!==id))}/>
+        const slices = extractDrumSlices(buffer, alignedHits);
+        setDrumHits(alignedHits);
+        setDrumSlices(slices);
+        setMessage(`REBUILD READY — ${alignedHits.length} SOURCE HITS`);
+      } else {
+        const notes = detectBass(samples, buffer.sampleRate, sourceBpm, null);
+        setBassNotes(notes);
+        setMessage(`TRANSCRIPTION READY — ${notes.length} NOTES`);
       }
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      <div className="statusStrip">
-        <span><SlidersHorizontal size={14}/> {mode==="drums"?`${drumHits.length} hits · ${lanes} lanes`:`${transformedBass.length} notes · ${semitone>=0?"+":""}${semitone} semitones`}</span>
-        <span>Target: <b>{targetBpm} BPM{mode==="bass"?` · ${targetRoot}`:""}</b></span>
-      </div>
-    </section>
+  function playOriginal() {
+    if (!file) return;
+    rebuiltPlaybackRef.current?.stop();
+    rebuiltPlaybackRef.current = null;
 
-    <footer>
-      <span>V0.1 · local-first · no uploads</span>
-      <span>Next: reference-song stem extraction + lane remapping</span>
-    </footer>
-  </main>
+    if (!audioRef.current) {
+      const url = URL.createObjectURL(file);
+      audioUrlRef.current = url;
+      audioRef.current = new Audio(url);
+      audioRef.current.ontimeupdate = () => {
+        const audio = audioRef.current;
+        if (audio) setRatio(audio.duration ? audio.currentTime / audio.duration : 0);
+      };
+      audioRef.current.onended = () => {
+        setPlaying(false);
+        setRatio(0);
+      };
+    }
+
+    if (playing) {
+      audioRef.current.pause();
+      setPlaying(false);
+    } else {
+      void audioRef.current.play();
+      setPlaying(true);
+    }
+  }
+
+  function playRebuilt() {
+    if (!drumSlices.length) return;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      setPlaying(false);
+    }
+    rebuiltPlaybackRef.current?.stop();
+    rebuiltPlaybackRef.current = playDrumRebuild(drumSlices, targetBpm);
+  }
+
+  function replaceFile() {
+    stopPlayback();
+    setFile(null);
+    setBuffer(null);
+    setSamples(null);
+    setRhythm(null);
+    clearAnalysis();
+    setMessage("READY — DROP A CLEAN STEM");
+  }
+
+  function exportMidi() {
+    if (mode === "drums") {
+      downloadBlob(drumsMidi(drumHits, targetBpm), `drums-${targetBpm}bpm.mid`);
+    } else {
+      downloadBlob(bassMidi(transformedBass, targetBpm), `bass-${targetRoot}-${targetBpm}bpm.mid`);
+    }
+  }
+
+  function switchMode(nextMode: Mode) {
+    if (nextMode === mode) return;
+    rebuiltPlaybackRef.current?.stop();
+    setMode(nextMode);
+    clearAnalysis();
+    setMessage(file ? `READY — PROCESS ${nextMode.toUpperCase()} STEM` : "READY — DROP A CLEAN STEM");
+  }
+
+  return (
+    <main className="machineShell">
+      <header className="machineHeader">
+        <div>
+          <div className="brandLine"><span>PT</span> PATTERN TRANSLATOR</div>
+          <div className="versionLine">DIGITAL GROOVE WORKSTATION // BUILD 0.2</div>
+        </div>
+        <div className="statusLed"><i /> LOCAL DSP</div>
+      </header>
+
+      <section className="module modeModule">
+        <div className="moduleTitle">01 // SOURCE TYPE</div>
+        <div className="modeButtons">
+          <button className={mode === "drums" ? "active" : ""} onClick={() => switchMode("drums")}>
+            <Drum size={16} /> DRUMS
+          </button>
+          <button className={mode === "bass" ? "active" : ""} onClick={() => switchMode("bass")}>
+            <Music2 size={16} /> BASS
+          </button>
+          <button className="disabledTool" disabled title="Full-mix separator service is the next module">
+            <Scissors size={16} /> SPLIT FULL MIX // NEXT
+          </button>
+        </div>
+      </section>
+
+      <section className="module sourceModule">
+        <div className="moduleTitle">02 // AUDIO INPUT</div>
+        {!file ? (
+          <div
+            className={`dropZone ${drag ? "drag" : ""}`}
+            onDragOver={(event) => { event.preventDefault(); setDrag(true); }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDrag(false);
+              const nextFile = event.dataTransfer.files[0];
+              if (nextFile) void ingest(nextFile);
+            }}
+            onClick={() => inputRef.current?.click()}
+          >
+            <input ref={inputRef} type="file" accept="audio/*" hidden onChange={(event) => {
+              const nextFile = event.target.files?.[0];
+              if (nextFile) void ingest(nextFile);
+            }} />
+            <Upload size={22} />
+            <b>DROP {mode.toUpperCase()} STEM</b>
+            <span>WAV / MP3 / M4A — LOCAL ANALYSIS</span>
+          </div>
+        ) : (
+          <>
+            <div className="transportBar">
+              <button className="squareButton" onClick={playOriginal} title="Play original">
+                {playing ? <Pause size={17} /> : <Play size={17} />}
+              </button>
+              <div className="fileReadout">
+                <b>{file.name}</b>
+                <span>{buffer?.duration.toFixed(1)} SEC // {buffer?.sampleRate.toLocaleString()} HZ</span>
+              </div>
+              {mode === "drums" && (
+                <button className="utilityButton" onClick={playRebuilt} disabled={!drumSlices.length}>
+                  <Play size={14} /> REBUILT
+                </button>
+              )}
+              <button className="utilityButton" onClick={replaceFile}><RotateCcw size={14} /> EJECT</button>
+            </div>
+            <Waveform samples={samples} currentRatio={ratio} />
+          </>
+        )}
+      </section>
+
+      <section className="module translateModule">
+        <div className="moduleTitle">03 // TRANSLATE</div>
+        <div className="translateGrid">
+          <label className="digitalControl">
+            <span>SOURCE BPM</span>
+            <input type="number" min="20" max="300" step="0.1" value={sourceBpm} onChange={(e) => setSourceBpm(+e.target.value)} />
+          </label>
+          <div className="flowArrow">▶</div>
+          <label className="digitalControl targetControl">
+            <span>TARGET BPM</span>
+            <input type="number" min="20" max="300" step="0.1" value={targetBpm} onChange={(e) => setTargetBpm(+e.target.value)} />
+          </label>
+
+          {mode === "bass" && (
+            <>
+              <label className="keyControl">
+                <span>SOURCE ROOT</span>
+                <select value={sourceRoot} onChange={(e) => setSourceRoot(e.target.value)}>
+                  {ROOTS.map((root) => <option key={root}>{root}</option>)}
+                </select>
+              </label>
+              <div className="flowArrow">▶</div>
+              <label className="keyControl targetControl">
+                <span>TARGET ROOT</span>
+                <select value={targetRoot} onChange={(e) => setTargetRoot(e.target.value)}>
+                  {ROOTS.map((root) => <option key={root}>{root}</option>)}
+                </select>
+              </label>
+            </>
+          )}
+        </div>
+        <div className="actionRail">
+          <div className="lcdStatus"><i className={busy ? "blink" : ""} /> {message}</div>
+          <button className="processButton" disabled={!file || busy} onClick={() => void processStem()}>
+            <Wand2 size={17} /> {busy ? "WORKING…" : mode === "drums" ? "ANALYZE + REBUILD" : "TRANSCRIBE"}
+          </button>
+        </div>
+      </section>
+
+      <section className="module patternModule">
+        <div className="moduleTitle">04 // EVENT MONITOR</div>
+        {mode === "drums" ? (
+          drumHits.length ? <DrumPattern hits={drumHits} /> : <div className="emptyMonitor">NO EVENTS — PROCESS STEM</div>
+        ) : transformedBass.length ? (
+          <div className="noteMonitor">
+            {transformedBass.slice(0, 40).map((note) => (
+              <span key={note.id}>{midiNoteName(note.midi)} <small>@{note.beat.toFixed(2)}</small></span>
+            ))}
+          </div>
+        ) : <div className="emptyMonitor">NO NOTES — PROCESS STEM</div>}
+
+        <div className="monitorFooter">
+          <div className="miniReadouts">
+            <span>BEATS <b>{rhythm?.beats.length ?? 0}</b></span>
+            <span>{mode === "drums" ? "HITS" : "NOTES"} <b>{mode === "drums" ? drumHits.length : transformedBass.length}</b></span>
+            <span>GRID <b>FREE</b></span>
+          </div>
+          <button
+            className="exportButton"
+            disabled={mode === "drums" ? !drumHits.length : !transformedBass.length}
+            onClick={exportMidi}
+          >
+            <Download size={15} /> EXPORT MIDI
+          </button>
+        </div>
+      </section>
+
+      <footer className="machineFooter">
+        <span><SlidersHorizontal size={12} /> MICROTIMING PRESERVED // NO FORCED QUANTIZE</span>
+        <span>FULL MIX SEPARATION → NEXT MODULE</span>
+      </footer>
+    </main>
+  );
 }
