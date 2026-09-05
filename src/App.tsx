@@ -23,12 +23,13 @@ import {
 import { drumsMidi, bassMidi } from "./midi";
 import { analyzeRhythm, secondsToBeatPosition, type RhythmAnalysis } from "./analysis/rhythm";
 import { detectDrumOnsets } from "./analysis/drumOnsets";
-import { extractDrumSlices, type DrumSlice } from "./audio/reconstructDrums";
 import {
-  playPreviewBuffer,
+  extractDrumSlices,
   renderDrumPreview,
-  type PreviewPlayback,
-} from "./audio/renderDrumPreview";
+  playRenderedPreview,
+  type DrumPlayback,
+  type DrumSlice,
+} from "./audio/reconstructDrums";
 
 type Mode = "drums" | "bass";
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -121,7 +122,7 @@ function DrumPattern({ hits }: { hits: DrumHit[] }) {
           </div>
         );
       })}
-      <div className="patternHint">First 4 bars · SuperFlux onsets · exact microtiming retained</div>
+      <div className="patternHint">First 4 bars · exact microtiming retained · no forced grid</div>
     </div>
   );
 }
@@ -138,19 +139,19 @@ export function App() {
   const [targetRoot, setTargetRoot] = useState("C");
   const [drumHits, setDrumHits] = useState<DrumHit[]>([]);
   const [drumSlices, setDrumSlices] = useState<DrumSlice[]>([]);
-  const [previewBuffer, setPreviewBuffer] = useState<AudioBuffer | null>(null);
-  const [previewPlaying, setPreviewPlaying] = useState(false);
   const [bassNotes, setBassNotes] = useState<BassNote[]>([]);
+  const [previewBuffer, setPreviewBuffer] = useState<AudioBuffer | null>(null);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
   const [ratio, setRatio] = useState(0);
   const [message, setMessage] = useState("READY — DROP A CLEAN STEM");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const previewPlaybackRef = useRef<PreviewPlayback | null>(null);
+  const previewPlaybackRef = useRef<DrumPlayback | null>(null);
 
   const semitone = ROOTS.indexOf(targetRoot) - ROOTS.indexOf(sourceRoot);
   const transformedBass = useMemo(() => transposeNotes(bassNotes, semitone), [bassNotes, semitone]);
@@ -175,9 +176,9 @@ export function App() {
   function clearAnalysis() {
     setDrumHits([]);
     setDrumSlices([]);
+    setBassNotes([]);
     setPreviewBuffer(null);
     setPreviewPlaying(false);
-    setBassNotes([]);
   }
 
   async function ingest(nextFile: File) {
@@ -218,11 +219,24 @@ export function App() {
     try {
       if (mode === "drums") {
         const rawHits = detectDrumOnsets(samples, buffer.sampleRate, sourceBpm);
+        if (!rawHits.length) {
+          setDrumHits([]);
+          setDrumSlices([]);
+          setPreviewBuffer(null);
+          setMessage("NO CLEAN ONSETS FOUND — TRY A CLEANER DRUM STEM");
+          return;
+        }
+
         const alignedHits = rhythm && rhythm.beats.length > 1
           ? rawHits.map((hit) => ({ ...hit, beat: secondsToBeatPosition(hit.time, rhythm.beats) }))
           : rawHits;
 
         const slices = extractDrumSlices(buffer, alignedHits);
+        if (!slices.length) {
+          setMessage("NO PREVIEW SLICES CREATED");
+          return;
+        }
+
         setMessage(`RENDERING PREVIEW — ${alignedHits.length} CLEAN ONSETS…`);
         const rendered = await renderDrumPreview(slices, targetBpm, buffer.sampleRate);
 
@@ -237,7 +251,7 @@ export function App() {
       }
     } catch (error) {
       console.error(error);
-      setMessage("ERROR — PROCESSING FAILED");
+      setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "PROCESSING FAILED"}`);
     } finally {
       setBusy(false);
     }
@@ -278,7 +292,6 @@ export function App() {
       audioRef.current.pause();
       setPlaying(false);
     }
-
     if (previewPlaying) {
       previewPlaybackRef.current?.stop();
       previewPlaybackRef.current = null;
@@ -287,11 +300,11 @@ export function App() {
     }
 
     previewPlaybackRef.current?.stop();
-    setPreviewPlaying(true);
-    previewPlaybackRef.current = playPreviewBuffer(previewBuffer, () => {
-      previewPlaybackRef.current = null;
+    previewPlaybackRef.current = playRenderedPreview(previewBuffer, () => {
       setPreviewPlaying(false);
+      previewPlaybackRef.current = null;
     });
+    setPreviewPlaying(true);
   }
 
   function replaceFile() {
@@ -322,12 +335,12 @@ export function App() {
 
   function changeTargetBpm(value: number) {
     setTargetBpm(value);
-    if (mode === "drums" && drumSlices.length) {
+    if (previewBuffer) {
+      setPreviewBuffer(null);
       previewPlaybackRef.current?.stop();
       previewPlaybackRef.current = null;
       setPreviewPlaying(false);
-      setPreviewBuffer(null);
-      setMessage("TARGET CHANGED — ANALYZE + REBUILD PREVIEW");
+      setMessage("TARGET CHANGED — REBUILD PREVIEW");
     }
   }
 
@@ -390,7 +403,7 @@ export function App() {
                 <span>{buffer?.duration.toFixed(1)} SEC // {buffer?.sampleRate.toLocaleString()} HZ</span>
               </div>
               {mode === "drums" && (
-                <button className="utilityButton previewButton" onClick={playPreview} disabled={!previewBuffer}>
+                <button className="previewButton" onClick={playPreview} disabled={!previewBuffer}>
                   {previewPlaying ? <Pause size={14} /> : <Play size={14} />}
                   {previewPlaying ? "STOP PREVIEW" : "PREVIEW TRANSLATED"}
                 </button>
@@ -456,9 +469,8 @@ export function App() {
         <div className="monitorFooter">
           <div className="miniReadouts">
             <span>BEATS <b>{rhythm?.beats.length ?? 0}</b></span>
-            <span>{mode === "drums" ? "ONSETS" : "NOTES"} <b>{mode === "drums" ? drumHits.length : transformedBass.length}</b></span>
+            <span>{mode === "drums" ? "HITS" : "NOTES"} <b>{mode === "drums" ? drumHits.length : transformedBass.length}</b></span>
             <span>GRID <b>FREE</b></span>
-            {mode === "drums" && <span>PREVIEW <b>{previewBuffer ? "READY" : "—"}</b></span>}
           </div>
           <button
             className="exportButton"
@@ -472,7 +484,7 @@ export function App() {
 
       <footer className="machineFooter">
         <span><SlidersHorizontal size={12} /> SUPERFLUX ONSETS // MICROTIMING PRESERVED</span>
-        <span>FULL MIX + DRUM SUB-SEPARATION → NEXT MODULE</span>
+        <span>FULL MIX + DRUM SUBSTEM SEPARATION → NEXT</span>
       </footer>
     </main>
   );
