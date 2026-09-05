@@ -1,0 +1,18 @@
+.splitWorkspace{display:block}
+.splitModeTabs{display:flex;gap:6px;margin:8px 0}
+.splitModeTabs button{border:1px solid #26323b;border-top-color:#d4dde3;border-left-color:#d4dde3;background:linear-gradient(#8ea0af,#667786);color:#17202a;box-shadow:inset 1px 1px #bfcbd3,inset -1px -1px #40505d;padding:8px 14px;font:900 10px "Courier New",monospace;letter-spacing:.06em}
+.splitModeTabs button.active{background:linear-gradient(#ffc23a,#d78f00);color:#2b210a;box-shadow:inset 1px 1px #ffe29a,inset -1px -1px #7f5300}
+.splitDrop{min-height:120px;background:#4d5c68;border:2px inset #aab8c2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#e9eff2;font-family:"Courier New",monospace;cursor:pointer;margin:8px 0}
+.splitDrop b{font-size:12px}
+.splitDrop span{font-size:9px;color:#c8d2d9}
+.splitRack{margin-top:9px;background:#718395;border:1px solid #a9b8c4;border-bottom-color:#394753;box-shadow:inset 1px 1px #b7c5cf,inset -1px -1px #465461;padding:10px}
+.splitRackTitle{font:700 10px "Courier New",monospace;color:#e9eef1;letter-spacing:.08em;margin-bottom:8px;text-shadow:1px 1px #42515e}
+.splitStemGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.splitStemCard{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:7px;align-items:end;background:#4d5c68;border:2px inset #aab8c2;padding:7px}
+.splitStemReadout{min-width:0;background:#1e2a27;border:2px inset #809084;padding:7px 8px;font-family:"Courier New",monospace;color:#8dff70}
+.splitStemReadout b{display:block;font-size:11px}
+.splitStemReadout span{display:block;margin-top:3px;font-size:9px;color:#69bd5c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.splitStemCard .utilityButton,.splitStemCard .abPlayButton{align-self:stretch;height:34px}
+.splitActionRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}
+.splitActionRow .midiWarning{margin-top:0}
+@media(max-width:760px){.splitStemGrid{grid-template-columns:1fr}.splitActionRow{grid-template-columns:1fr}.splitStemCard{grid-template-columns:1fr 1fr}.splitStemReadout{grid-column:1/-1}}
