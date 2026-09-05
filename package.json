@@ -1,7 +1,7 @@
 {
   "name": "pattern-translator-web",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,6 +16,7 @@
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "tone": "^15.1.22",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   },
