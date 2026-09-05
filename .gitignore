@@ -2,3 +2,7 @@ node_modules/
 dist/
 .wrangler/
 .DS_Store
+backend/.venv/
+backend/data/
+__pycache__/
+*.pyc
