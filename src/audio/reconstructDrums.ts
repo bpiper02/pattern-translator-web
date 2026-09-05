@@ -10,9 +10,7 @@ export type DrumSlice = {
 export type DrumPlayback = { stop: () => void };
 
 const PRE_ROLL = 0.004;
-const MIN_SLICE = 0.05;
-const MAX_SLICE = 0.24;
-const FADE_OUT = 0.012;
+const MAX_TAIL = 0.65;
 
 function copySlice(source: AudioBuffer, startSeconds: number, endSeconds: number) {
   const sr = source.sampleRate;
@@ -23,14 +21,7 @@ function copySlice(source: AudioBuffer, startSeconds: number, endSeconds: number
 
   for (let ch = 0; ch < source.numberOfChannels; ch++) {
     const src = source.getChannelData(ch).subarray(start, end);
-    const dst = out.getChannelData(ch);
-    dst.set(src);
-
-    const fadeSamples = Math.min(Math.floor(FADE_OUT * sr), dst.length);
-    for (let i = 0; i < fadeSamples; i++) {
-      const idx = dst.length - fadeSamples + i;
-      dst[idx] *= 1 - i / Math.max(1, fadeSamples - 1);
-    }
+    out.getChannelData(ch).set(src);
   }
 
   return out;
@@ -42,9 +33,8 @@ export function extractDrumSlices(source: AudioBuffer, hits: DrumHit[]): DrumSli
   return ordered.map((hit, index) => {
     const next = ordered[index + 1];
     const start = Math.max(0, hit.time - PRE_ROLL);
-    const gap = next ? next.time - hit.time : MAX_SLICE;
-    const duration = Math.min(MAX_SLICE, Math.max(MIN_SLICE, gap * 0.82));
-    const end = Math.min(source.duration, hit.time + duration);
+    const nextBoundary = next ? Math.max(start + 0.012, next.time - PRE_ROLL) : hit.time + MAX_TAIL;
+    const end = Math.min(source.duration, nextBoundary, hit.time + MAX_TAIL);
 
     return {
       id: hit.id,
@@ -63,11 +53,8 @@ export function playDrumRebuild(slices: DrumSlice[], bpm: number): DrumPlayback 
 
   for (const slice of slices) {
     const source = context.createBufferSource();
-    const gain = context.createGain();
     source.buffer = slice.buffer;
-    gain.gain.value = Math.max(0.25, Math.min(1, slice.velocity / 127));
-    source.connect(gain);
-    gain.connect(context.destination);
+    source.connect(context.destination);
     source.start(origin + Math.max(0, slice.beat) * secondsPerBeat);
     sources.push(source);
   }
