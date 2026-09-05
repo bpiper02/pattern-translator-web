@@ -16,8 +16,9 @@ import { analyzeRhythm, type RhythmAnalysis } from "./analysis/rhythm";
 import { transformAudio } from "./audio/transformAudio";
 import { playRenderedPreview, type DrumPlayback } from "./audio/reconstructDrums";
 import { StemEditor } from "./components/StemEditor";
+import { ResampleWorkspace } from "./components/ResampleWorkspace";
 
-type Workspace = "translate" | "edit";
+type Workspace = "translate" | "edit" | "resample";
 type Mode = "beat" | "drums" | "bass" | "melody";
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -286,7 +287,7 @@ export function App() {
       <header className="machineHeader">
         <div>
           <div className="brandLine"><span>PT</span> PATTERN TRANSLATOR</div>
-          <div className="versionLine">DIRECT AUDIO WORKSTATION // BUILD 0.6</div>
+          <div className="versionLine">DIRECT AUDIO WORKSTATION // BUILD 0.7</div>
         </div>
         <div className="statusTag">LOCAL DSP</div>
       </header>
@@ -294,10 +295,13 @@ export function App() {
       <nav className="workspaceTabs" aria-label="Workspace">
         <button className={workspace === "translate" ? "active" : ""} onClick={() => switchWorkspace("translate")}>TRANSLATE</button>
         <button className={workspace === "edit" ? "active" : ""} onClick={() => switchWorkspace("edit")}>EDIT</button>
+        <button className={workspace === "resample" ? "active" : ""} onClick={() => switchWorkspace("resample")}>RESAMPLE</button>
       </nav>
 
       {workspace === "edit" ? (
         <StemEditor />
+      ) : workspace === "resample" ? (
+        <ResampleWorkspace />
       ) : (
         <>
           <section className="module modeModule">
@@ -398,7 +402,7 @@ export function App() {
 
       <footer className="machineFooter">
         <span><SlidersHorizontal size={12} /> DIRECT AUDIO WORKSTATION</span>
-        <span>{workspace === "translate" ? "TRANSLATE BPM / PITCH / KEY" : "EDIT STEMS / PREVIEW / EXPORT WAV"}</span>
+        <span>{workspace === "translate" ? "TRANSLATE BPM / PITCH / KEY" : workspace === "edit" ? "EDIT STEMS / PREVIEW / EXPORT WAV" : "NEW PATTERNS FROM YOUR OWN SOUND KIT"}</span>
       </footer>
     </main>
   );
