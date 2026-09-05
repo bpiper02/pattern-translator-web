@@ -4,4 +4,14 @@
 .autoKitReadout span{display:block;margin-top:4px;font-size:9px;color:#69bd5c}
 .autoKitButton{cursor:pointer;justify-content:center;min-width:180px}
 .resampleWorkspace .vintageProgress{margin:8px 0}
-@media(max-width:700px){.autoKitSource{grid-template-columns:1fr}.autoKitButton{min-width:0}}
+.patternLegend{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 7px;padding:6px 8px;background:#46545f;border:1px inset #91a0aa;color:#d7e0e4;font:8px "Courier New",monospace}
+.patternLegend span{display:flex;align-items:center;gap:5px}
+.patternLegend i{display:inline-block;width:13px;height:9px;border:1px solid #a9b7c0}
+.legendSource{background:repeating-linear-gradient(135deg,#8a9aa5 0,#8a9aa5 3px,#53636f 3px,#53636f 6px)}
+.legendWorking{background:#d79a18;border-color:#f2c760!important}
+.stepCell{position:relative}
+.stepCell.sourceHit::after{content:"";position:absolute;left:4px;right:4px;bottom:4px;height:4px;background:repeating-linear-gradient(to right,#b4c0c7 0,#b4c0c7 4px,#647581 4px,#647581 7px);opacity:.78;pointer-events:none}
+.stepCell.on.sourceHit::after{background:#f4df9b;opacity:.95}
+.sourcePreviewButton{background:linear-gradient(#bfc8ce,#8998a3)}
+.sourceGridNote{margin-top:7px}
+@media(max-width:700px){.autoKitSource{grid-template-columns:1fr}.autoKitButton{min-width:0}.patternLegend{gap:8px}}
