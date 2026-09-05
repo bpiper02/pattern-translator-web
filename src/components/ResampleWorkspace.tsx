@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Mic, Pause, Play, Scissors, Square, Upload } from "lucide-react";
+import { Copy, Download, Mic, Pause, Play, Scissors, Square, Upload } from "lucide-react";
 import * as Tone from "tone";
 import { decodeAudio, monoSamples, type DrumHit } from "../audio";
 import { audioBufferToWav } from "../audio/wav";
 import { extractAutoDrumKit, type AutoKitLane } from "../audio/autoDrumKit";
 import { drumsMidi } from "../midi";
+import { DraftNumberInput } from "./DraftNumberInput";
 
 const STEPS = 16;
 const LANES = ["KICK", "SNARE", "HAT", "PERC"] as const;
 type LaneName = typeof LANES[number];
+type PreviewMode = "source" | "working";
 
 type LaneState = {
   name: LaneName;
@@ -18,8 +20,19 @@ type LaneState = {
   steps: boolean[];
 };
 
+type SourcePattern = Record<LaneName, boolean[]>;
+
 function blankLane(name: LaneName): LaneState {
   return { name, file: null, buffer: null, url: null, steps: Array(STEPS).fill(false) };
+}
+
+function blankSourcePattern(): SourcePattern {
+  return {
+    KICK: Array(STEPS).fill(false),
+    SNARE: Array(STEPS).fill(false),
+    HAT: Array(STEPS).fill(false),
+    PERC: Array(STEPS).fill(false),
+  };
 }
 
 function downloadBlob(blob: Blob, name: string) {
@@ -85,8 +98,9 @@ async function renderPattern(lanes: LaneState[], bpm: number, bars = 4) {
 
 export function ResampleWorkspace() {
   const [lanes, setLanes] = useState<LaneState[]>(() => LANES.map(blankLane));
+  const [sourcePattern, setSourcePattern] = useState<SourcePattern>(() => blankSourcePattern());
   const [bpm, setBpm] = useState(100);
-  const [playing, setPlaying] = useState(false);
+  const [playingMode, setPlayingMode] = useState<PreviewMode | null>(null);
   const [currentStep, setCurrentStep] = useState(-1);
   const [rendered, setRendered] = useState<AudioBuffer | null>(null);
   const [rendering, setRendering] = useState(false);
@@ -99,11 +113,13 @@ export function ResampleWorkspace() {
   const playersRef = useRef<Map<LaneName, Tone.Player>>(new Map());
   const scheduleRef = useRef<number | null>(null);
   const patternRef = useRef(lanes);
+  const sourcePatternRef = useRef(sourcePattern);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => { patternRef.current = lanes; }, [lanes]);
+  useEffect(() => { sourcePatternRef.current = sourcePattern; }, [sourcePattern]);
 
   useEffect(() => () => {
     Tone.getTransport().stop();
@@ -114,6 +130,10 @@ export function ResampleWorkspace() {
   }, []);
 
   const loadedCount = useMemo(() => lanes.filter((lane) => lane.buffer).length, [lanes]);
+  const hasSourcePattern = useMemo(
+    () => LANES.some((lane) => sourcePattern[lane].some(Boolean)),
+    [sourcePattern],
+  );
 
   function invalidate(next = "PATTERN CHANGED — PREVIEW / EXPORT WILL USE CURRENT STEPS") {
     setRendered(null);
@@ -163,10 +183,12 @@ export function ResampleWorkspace() {
         installed.push(name);
       }
 
+      setSourcePattern(result.sourcePattern as SourcePattern);
       const detail = LANES.map((name) => `${name}:${result.counts[name]}`).join("  ");
-      setMessage(`AUTO KIT READY — ${installed.join(" / ")} // ${result.totalOnsets} ONSETS // ${detail}`);
+      setMessage(`AUTO KIT + SOURCE GRID READY — ${result.totalOnsets} ONSETS // ${detail}`);
     } catch (error) {
       console.error(error);
+      setSourcePattern(blankSourcePattern());
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "KIT EXTRACTION FAILED"}`);
     } finally {
       setExtracting(false);
@@ -188,19 +210,31 @@ export function ResampleWorkspace() {
     invalidate();
   }
 
-  function clearPattern() {
-    setLanes((current) => current.map((lane) => ({ ...lane, steps: Array(STEPS).fill(false) })));
-    invalidate("PATTERN CLEARED");
+  function copySourcePattern() {
+    setLanes((current) => current.map((lane) => ({
+      ...lane,
+      steps: [...sourcePattern[lane.name]],
+    })));
+    invalidate("SOURCE PATTERN COPIED — EDIT ANY AMBER STEP");
   }
 
-  async function togglePlayback() {
+  function clearPattern() {
+    setLanes((current) => current.map((lane) => ({ ...lane, steps: Array(STEPS).fill(false) })));
+    invalidate("WORKING PATTERN CLEARED — SOURCE MARKERS ARE STILL VISIBLE");
+  }
+
+  function stopSequencer() {
     const transport = Tone.getTransport();
-    if (playing) {
-      transport.stop();
-      if (scheduleRef.current !== null) transport.clear(scheduleRef.current);
-      scheduleRef.current = null;
-      setCurrentStep(-1);
-      setPlaying(false);
+    transport.stop();
+    if (scheduleRef.current !== null) transport.clear(scheduleRef.current);
+    scheduleRef.current = null;
+    setCurrentStep(-1);
+    setPlayingMode(null);
+  }
+
+  async function togglePlayback(mode: PreviewMode) {
+    if (playingMode === mode) {
+      stopSequencer();
       return;
     }
 
@@ -208,9 +242,14 @@ export function ResampleWorkspace() {
       setMessage("EXTRACT OR LOAD AT LEAST ONE SAMPLE FIRST");
       return;
     }
+    if (mode === "source" && !hasSourcePattern) {
+      setMessage("NO SOURCE PATTERN DETECTED YET");
+      return;
+    }
 
+    stopSequencer();
     await Tone.start();
-    transport.stop();
+    const transport = Tone.getTransport();
     transport.cancel();
     transport.bpm.value = bpm;
     transport.position = 0;
@@ -218,14 +257,17 @@ export function ResampleWorkspace() {
     scheduleRef.current = transport.scheduleRepeat((time) => {
       const activeStep = step % STEPS;
       patternRef.current.forEach((lane) => {
-        if (lane.steps[activeStep]) playersRef.current.get(lane.name)?.start(time);
+        const enabled = mode === "source"
+          ? sourcePatternRef.current[lane.name][activeStep]
+          : lane.steps[activeStep];
+        if (enabled) playersRef.current.get(lane.name)?.start(time);
       });
       Tone.getDraw().schedule(() => setCurrentStep(activeStep), time);
       step += 1;
     }, "16n");
     transport.start();
-    setPlaying(true);
-    setMessage("PLAYING CURRENT PATTERN");
+    setPlayingMode(mode);
+    setMessage(mode === "source" ? "PLAYING DETECTED SOURCE PATTERN" : "PLAYING WORKING PATTERN");
   }
 
   async function buildWav() {
@@ -312,12 +354,12 @@ export function ResampleWorkspace() {
     <section className="resampleWorkspace">
       <section className="module">
         <div className="moduleTitle">01 // SOURCE → AUTO SOUND KIT</div>
-        <div className="resampleIntro">Drop one clean DRUM STEM. Pattern Translator finds transient families and automatically picks a representative kick, snare, hat and percussion hit. You can replace any result manually below.</div>
+        <div className="resampleIntro">Drop one clean DRUM STEM. Pattern Translator extracts a kit and maps the first detected bar onto the grid as faint SOURCE markers. You can audition, copy and edit that pattern below.</div>
 
         <div className="autoKitSource">
           <div className="autoKitReadout">
             <b>{sourceStem?.name ?? "NO DRUM STEM LOADED"}</b>
-            <span>{sourceStem ? "AUTO-EXTRACTION RUNS ON LOAD" : "WAV / MP3 / M4A DRUM STEM"}</span>
+            <span>{sourceStem ? "AUTO-EXTRACTION + SOURCE GRID READY AFTER ANALYSIS" : "WAV / MP3 / M4A DRUM STEM"}</span>
           </div>
           <label className="processButton autoKitButton">
             <Scissors size={15} /> {extracting ? "EXTRACTING…" : sourceStem ? "RE-EXTRACT KIT" : "LOAD DRUM STEM"}
@@ -340,23 +382,45 @@ export function ResampleWorkspace() {
       </section>
 
       <section className="module">
-        <div className="moduleTitle">02 // NEW DRUM PATTERN</div>
+        <div className="moduleTitle">02 // SOURCE PATTERN → WORKING PATTERN</div>
         <div className="sequencerTopbar">
-          <label className="miniControl"><span>BPM</span><input type="number" min="40" max="240" value={bpm} onChange={(event) => { setBpm(Math.max(40, Math.min(240, +event.target.value || 100))); invalidate(); }} /></label>
-          <button className="processButton" onClick={() => void togglePlayback()}>{playing ? <Pause size={14} /> : <Play size={14} />}{playing ? "STOP" : "PREVIEW LOOP"}</button>
-          <button className="utilityButton" onClick={clearPattern}>CLEAR</button>
+          <label className="miniControl"><span>BPM</span><DraftNumberInput value={bpm} min={40} max={240} onCommit={(value) => { setBpm(value); invalidate("BPM CHANGED — RE-EXTRACT IF SOURCE GRID LOOKS OFF"); }} ariaLabel="Resample BPM" /></label>
+          <button className="utilityButton sourcePreviewButton" disabled={!hasSourcePattern} onClick={() => void togglePlayback("source")}>
+            {playingMode === "source" ? <Pause size={14} /> : <Play size={14} />}{playingMode === "source" ? "STOP SOURCE" : "PREVIEW SOURCE"}
+          </button>
+          <button className="utilityButton" disabled={!hasSourcePattern} onClick={copySourcePattern}><Copy size={13} /> COPY SOURCE</button>
+          <button className="processButton" onClick={() => void togglePlayback("working")}>
+            {playingMode === "working" ? <Pause size={14} /> : <Play size={14} />}{playingMode === "working" ? "STOP" : "PREVIEW WORKING"}
+          </button>
+          <button className="utilityButton" onClick={clearPattern}>CLEAR WORKING</button>
         </div>
+
+        <div className="patternLegend">
+          <span><i className="legendSource" /> SOURCE DETECTION</span>
+          <span><i className="legendWorking" /> YOUR WORKING HIT</span>
+        </div>
+
         <div className="stepGrid">
           <div className="stepHeader"><span />{Array.from({ length: STEPS }, (_, step) => <b key={step}>{step + 1}</b>)}</div>
           {lanes.map((lane) => (
             <div className="stepRow" key={lane.name}>
               <button className="laneAudition" disabled={!lane.buffer} onClick={() => void audition(lane.name)}>{lane.name}</button>
-              {lane.steps.map((enabled, step) => (
-                <button key={step} disabled={!lane.buffer} aria-label={`${lane.name} step ${step + 1}`} className={`stepCell ${enabled ? "on" : ""} ${currentStep === step ? "playhead" : ""}`} onClick={() => toggleStep(lane.name, step)} />
-              ))}
+              {lane.steps.map((enabled, step) => {
+                const sourceHit = sourcePattern[lane.name][step];
+                return (
+                  <button
+                    key={step}
+                    disabled={!lane.buffer}
+                    aria-label={`${lane.name} step ${step + 1}${sourceHit ? ", source hit detected" : ""}`}
+                    className={`stepCell ${sourceHit ? "sourceHit" : ""} ${enabled ? "on" : ""} ${currentStep === step ? "playhead" : ""}`}
+                    onClick={() => toggleStep(lane.name, step)}
+                  />
+                );
+              })}
             </div>
           ))}
         </div>
+        <div className="voiceNote sourceGridNote">Faint source markers are a visual transcription of the first detected bar, not locked steps. Click COPY SOURCE to start from it, or build a different pattern while keeping the original groove visible underneath.</div>
       </section>
 
       <section className="module">
@@ -364,7 +428,7 @@ export function ResampleWorkspace() {
         <div className="voiceCapture">
           <label className="miniControl"><span>VOICE TARGET</span><select value={voiceLane} onChange={(event) => setVoiceLane(event.target.value as LaneName)}>{LANES.map((lane) => <option key={lane}>{lane}</option>)}</select></label>
           <button className={recording ? "recordButton active" : "recordButton"} onClick={() => recording ? stopVoiceCapture() : void startVoiceCapture()}>{recording ? <Square size={14} /> : <Mic size={14} />}{recording ? "STOP + CONVERT" : "RECORD RHYTHM"}</button>
-          <div className="voiceNote">Beatbox/tap one part at a time. The browser detects hit timing and writes it into the selected lane; then you can fix any step manually before preview/export.</div>
+          <div className="voiceNote">Beatbox/tap one part at a time. The browser detects hit timing and writes it into the selected working lane; then you can fix any step manually before preview/export.</div>
         </div>
       </section>
 
@@ -376,7 +440,7 @@ export function ResampleWorkspace() {
           <button className="exportButton primaryExport" disabled={!rendered} onClick={exportWav}><Download size={14} /> EXPORT WAV</button>
           <button className="exportButton" onClick={exportMidi}>EXPORT MIDI</button>
         </div>
-        <div className="midiWarning">AUTO KIT currently expects a drum stem and uses transient-family analysis, not full-mix source separation. Manual replacement stays available when an extracted hit is wrong. Full beat → stems is the next separation layer.</div>
+        <div className="midiWarning">SOURCE markers depend on the BPM shown above and the current transient classifier. If the source grid is obviously shifted, correct BPM and re-extract. Manual steps remain the final truth for exported WAV/MIDI.</div>
       </section>
     </section>
   );
