@@ -68,3 +68,6 @@ export function playDrumRebuild(slices: DrumSlice[], bpm: number): DrumPlayback 
     },
   };
 }
+
+// Compatibility re-exports for the preview pipeline used by App.tsx.
+export { renderDrumPreview, playPreviewBuffer as playRenderedPreview } from "./renderDrumPreview";

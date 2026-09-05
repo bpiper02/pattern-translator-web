@@ -19,19 +19,21 @@ button:disabled{cursor:not-allowed}
 .module{margin-top:9px;background:#718395;border:1px solid #a9b8c4;border-bottom-color:#394753;box-shadow:inset 1px 1px #b7c5cf,inset -1px -1px #465461;padding:10px}
 .moduleTitle{font-family:"Courier New",monospace;font-size:10px;font-weight:700;color:#e9eef1;letter-spacing:.08em;margin-bottom:8px;text-shadow:1px 1px #42515e}
 .modeButtons{display:flex;gap:6px;flex-wrap:wrap}
-.modeButtons button,.utilityButton,.processButton,.exportButton,.squareButton{border:1px solid #26323b;border-top-color:#d4dde3;border-left-color:#d4dde3;background:linear-gradient(#8ea0af,#667786);color:#17202a;box-shadow:inset 1px 1px #bfcbd3,inset -1px -1px #40505d;padding:7px 12px;font-weight:700;display:inline-flex;align-items:center;gap:7px;text-transform:uppercase}
+.modeButtons button,.utilityButton,.processButton,.exportButton,.squareButton,.abPlayButton{border:1px solid #26323b;border-top-color:#d4dde3;border-left-color:#d4dde3;background:linear-gradient(#8ea0af,#667786);color:#17202a;box-shadow:inset 1px 1px #bfcbd3,inset -1px -1px #40505d;padding:7px 12px;font-weight:700;display:inline-flex;align-items:center;gap:7px;text-transform:uppercase}
 .modeButtons button.active{background:linear-gradient(#ffc23a,#d78f00);color:#2b210a;box-shadow:inset 1px 1px #ffe29a,inset -1px -1px #7f5300}
-.modeButtons .disabledTool{margin-left:auto;opacity:.55}
 .dropZone{height:150px;background:#4d5c68;border:2px inset #aab8c2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;color:#e9eff2;font-family:"Courier New",monospace;cursor:pointer}
 .dropZone.drag{background:#5b6c79;outline:2px solid #ffb000;outline-offset:-5px}
 .dropZone span{font-size:10px;color:#c8d2d9}
-.transportBar{display:flex;align-items:center;gap:8px;background:#4d5c68;border:2px inset #aab8c2;padding:7px}
-.squareButton{width:38px;height:36px;justify-content:center;padding:0;background:linear-gradient(#ececec,#bfc3c6)}
-.fileReadout{min-width:0;flex:1;background:#1e2a27;border:2px inset #809084;padding:7px 9px;font-family:"Courier New",monospace;color:#8dff70}
+.abDeck{display:grid;grid-template-columns:auto minmax(190px,1fr) auto auto;align-items:stretch;gap:7px;background:#4d5c68;border:2px inset #aab8c2;padding:7px}
+.abChannel{display:flex;flex-direction:column;gap:4px;min-width:150px}
+.abLabel{font:700 9px "Courier New",monospace;color:#eef3f5;letter-spacing:.04em}
+.abPlayButton{height:34px;justify-content:center;font-size:10px;background:linear-gradient(#ececec,#bfc3c6)}
+.abPlayButton.rebuilt{background:linear-gradient(#b8d98d,#6e9b4a);color:#10200d;border-color:#31462a;border-top-color:#e4f5cc;border-left-color:#e4f5cc}
+.abPlayButton:disabled{opacity:.4}
+.fileReadout{min-width:0;align-self:end;background:#1e2a27;border:2px inset #809084;padding:7px 9px;font-family:"Courier New",monospace;color:#8dff70}
 .fileReadout b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
 .fileReadout span{display:block;font-size:9px;color:#69bd5c;margin-top:3px}
-.utilityButton{padding:7px 10px;font-size:11px}
-.previewButton{background:linear-gradient(#b8d98d,#6e9b4a);color:#10200d;border-color:#31462a;border-top-color:#e4f5cc;border-left-color:#e4f5cc;min-width:150px;justify-content:center}
+.utilityButton{padding:7px 10px;font-size:11px;align-self:end;height:34px}
 .utilityButton:disabled,.processButton:disabled,.exportButton:disabled{opacity:.45}
 .wave{display:block;width:100%;height:120px;background:#1f2a2d;border:2px inset #8c9ba6;margin-top:6px}
 .translateGrid{display:grid;grid-template-columns:minmax(150px,1fr) 34px minmax(150px,1fr);gap:8px;align-items:center}
@@ -46,31 +48,20 @@ button:disabled{cursor:not-allowed}
 .lcdStatus i.blink{animation:blink .65s steps(1) infinite}
 @keyframes blink{50%{opacity:.2}}
 .processButton{background:linear-gradient(#ffc23a,#d58a00);padding:8px 15px}
-.patternPanel{background:#3f4b55;border:2px inset #97a6b1;padding:8px}
-.ruler{display:grid;grid-template-columns:36px repeat(4,1fr);color:#d7e0e5;font:9px "Courier New",monospace;margin-bottom:4px}
-.ruler b{padding-left:6px}
-.patternLane{display:grid;grid-template-columns:36px 1fr;align-items:center;margin:4px 0}
-.laneName{color:#f2f4f5;font:bold 11px "Courier New",monospace;text-align:center}
-.laneTrack{height:30px;position:relative;background:#222c32;border:2px inset #7f8e99;background-image:repeating-linear-gradient(to right,transparent 0,transparent calc(6.25% - 1px),#334047 calc(6.25% - 1px),#334047 6.25%)}
-.barLine{position:absolute;top:0;bottom:0;border-left:1px solid #677983}.barLine.b1{left:25%}.barLine.b2{left:50%}.barLine.b3{left:75%}
-.eventLamp{position:absolute;top:5px;width:12px;height:16px;margin-left:-6px;padding:0;border:1px solid #744d00;border-top-color:#ffe39a;border-left-color:#ffe39a;background:#ffb000;box-shadow:0 0 5px #ffb000}
-.patternHint{font:9px "Courier New",monospace;color:#b7c3ca;margin:7px 0 1px 36px}
-.emptyMonitor{height:120px;display:grid;place-items:center;background:#3f4b55;border:2px inset #97a6b1;color:#c3cdd3;font:11px "Courier New",monospace}
-.noteMonitor{min-height:120px;background:#222c32;border:2px inset #97a6b1;padding:8px;display:flex;align-content:flex-start;gap:5px;flex-wrap:wrap}
-.noteMonitor span{background:#ffb000;border:1px outset #ffe086;padding:5px 7px;font:bold 10px "Courier New",monospace;color:#2a220d}
-.noteMonitor small{font-size:8px}
-.monitorFooter{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px}
-.miniReadouts{display:flex;gap:6px;flex-wrap:wrap}
-.miniReadouts span{font:9px "Courier New",monospace;background:#4c5a66;border:1px inset #9ba9b4;color:#e1e8ec;padding:6px 8px}.miniReadouts b{color:#8dff70}
+.midiWarning{margin-top:8px;background:#3f4b55;border:1px inset #93a3ae;color:#d6dfe4;padding:8px 10px;font:9px/1.45 "Courier New",monospace}
+.resultPanel{display:flex;align-items:center;justify-content:space-between;gap:14px;background:#3f4b55;border:2px inset #97a6b1;padding:12px}
+.resultPanel>div{display:flex;flex-direction:column;gap:5px;min-width:0}
+.resultPanel b{font:700 12px "Courier New",monospace;color:#f1f4f5}
+.resultPanel span{font:10px "Courier New",monospace;color:#b9c6cd}
 .exportButton{background:linear-gradient(#ececec,#b9bec1)}
+.primaryExport{background:linear-gradient(#b8d98d,#6e9b4a);color:#10200d;white-space:nowrap}
 .machineFooter{display:flex;justify-content:space-between;gap:10px;color:#dbe3e7;font:9px "Courier New",monospace;padding:10px 3px 2px}
 .machineFooter span{display:flex;align-items:center;gap:5px}
 @media(max-width:700px){
   .machineShell{width:calc(100% - 12px);margin:6px auto 20px}
   .machineHeader{align-items:flex-start;gap:8px}.statusLed{display:none}
-  .modeButtons .disabledTool{margin-left:0}
   .translateGrid{grid-template-columns:1fr}.flowArrow{transform:rotate(90deg)}
-  .actionRail,.monitorFooter,.machineFooter{flex-direction:column;align-items:stretch}
-  .utilityButton{padding:7px}.fileReadout span{display:none}
-  .transportBar{flex-wrap:wrap}.fileReadout{min-width:220px}.previewButton{min-width:0}
+  .actionRail,.machineFooter,.resultPanel{flex-direction:column;align-items:stretch}
+  .abDeck{grid-template-columns:1fr 1fr}.fileReadout{grid-column:1/-1;grid-row:1}.utilityButton{align-self:stretch}
+  .primaryExport{justify-content:center}
 }
