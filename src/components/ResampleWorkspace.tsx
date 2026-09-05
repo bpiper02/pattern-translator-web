@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Mic, Pause, Play, Square, Upload } from "lucide-react";
+import { Download, Mic, Pause, Play, Scissors, Square, Upload } from "lucide-react";
 import * as Tone from "tone";
 import { decodeAudio, monoSamples, type DrumHit } from "../audio";
 import { audioBufferToWav } from "../audio/wav";
+import { extractAutoDrumKit, type AutoKitLane } from "../audio/autoDrumKit";
 import { drumsMidi } from "../midi";
 
 const STEPS = 16;
@@ -89,9 +90,11 @@ export function ResampleWorkspace() {
   const [currentStep, setCurrentStep] = useState(-1);
   const [rendered, setRendered] = useState<AudioBuffer | null>(null);
   const [rendering, setRendering] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [sourceStem, setSourceStem] = useState<File | null>(null);
   const [recording, setRecording] = useState(false);
   const [voiceLane, setVoiceLane] = useState<LaneName>("KICK");
-  const [message, setMessage] = useState("LOAD YOUR OWN SOUNDS, PROGRAM A PATTERN, OR TAP IT IN WITH YOUR VOICE");
+  const [message, setMessage] = useState("DROP ONE DRUM STEM TO BUILD A KIT, OR LOAD YOUR OWN ONE-SHOTS");
 
   const playersRef = useRef<Map<LaneName, Tone.Player>>(new Map());
   const scheduleRef = useRef<number | null>(null);
@@ -106,7 +109,7 @@ export function ResampleWorkspace() {
     Tone.getTransport().stop();
     if (scheduleRef.current !== null) Tone.getTransport().clear(scheduleRef.current);
     playersRef.current.forEach((player) => player.dispose());
-    lanes.forEach((lane) => { if (lane.url) URL.revokeObjectURL(lane.url); });
+    patternRef.current.forEach((lane) => { if (lane.url) URL.revokeObjectURL(lane.url); });
     streamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
 
@@ -117,22 +120,56 @@ export function ResampleWorkspace() {
     setMessage(next);
   }
 
+  async function installSample(name: LaneName, file: File, buffer: AudioBuffer) {
+    const previous = patternRef.current.find((lane) => lane.name === name);
+    if (previous?.url) URL.revokeObjectURL(previous.url);
+    playersRef.current.get(name)?.dispose();
+
+    const url = URL.createObjectURL(file);
+    const player = new Tone.Player(url).toDestination();
+    playersRef.current.set(name, player);
+    await Tone.loaded();
+
+    setLanes((current) => current.map((lane) => lane.name === name ? { ...lane, file, buffer, url } : lane));
+  }
+
   async function loadSample(name: LaneName, file: File) {
     try {
       const buffer = await decodeAudio(file);
-      const previous = lanes.find((lane) => lane.name === name);
-      if (previous?.url) URL.revokeObjectURL(previous.url);
-      const url = URL.createObjectURL(file);
-      const oldPlayer = playersRef.current.get(name);
-      oldPlayer?.dispose();
-      const player = new Tone.Player(url).toDestination();
-      await Tone.loaded();
-      playersRef.current.set(name, player);
-      setLanes((current) => current.map((lane) => lane.name === name ? { ...lane, file, buffer, url } : lane));
+      await installSample(name, file, buffer);
       invalidate(`${name} SAMPLE READY — CLICK STEPS OR USE VOICE INPUT`);
     } catch (error) {
       console.error(error);
       setMessage(`ERROR — COULD NOT LOAD ${name}`);
+    }
+  }
+
+  async function extractStem(file: File) {
+    setSourceStem(file);
+    setExtracting(true);
+    setRendered(null);
+    setMessage("ANALYZING DRUM STEM + EXTRACTING KIT…");
+    try {
+      const buffer = await decodeAudio(file);
+      const result = extractAutoDrumKit(buffer, bpm);
+      const entries = Object.entries(result.lanes) as [AutoKitLane, AudioBuffer][];
+      if (!entries.length) throw new Error("No clean drum hits found");
+
+      const installed: LaneName[] = [];
+      for (const [name, sampleBuffer] of entries) {
+        const blob = audioBufferToWav(sampleBuffer);
+        const sampleFile = new File([blob], `${name.toLowerCase()}-auto.wav`, { type: "audio/wav" });
+        await installSample(name, sampleFile, sampleBuffer);
+        installed.push(name);
+      }
+
+      const detail = LANES.map((name) => `${name}:${result.counts[name]}`).join("  ");
+      setMessage(`AUTO KIT READY — ${installed.join(" / ")} // ${result.totalOnsets} ONSETS // ${detail}`);
+    } catch (error) {
+      console.error(error);
+      setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "KIT EXTRACTION FAILED"}`);
+    } finally {
+      setExtracting(false);
     }
   }
 
@@ -168,7 +205,7 @@ export function ResampleWorkspace() {
     }
 
     if (!loadedCount) {
-      setMessage("LOAD AT LEAST ONE SAMPLE FIRST");
+      setMessage("EXTRACT OR LOAD AT LEAST ONE SAMPLE FIRST");
       return;
     }
 
@@ -274,14 +311,28 @@ export function ResampleWorkspace() {
   return (
     <section className="resampleWorkspace">
       <section className="module">
-        <div className="moduleTitle">01 // SOURCE SOUND KIT</div>
-        <div className="resampleIntro">Load one-shots or clean extracted hits. These exact sounds become the kit used by the sequencer and exported WAV.</div>
+        <div className="moduleTitle">01 // SOURCE → AUTO SOUND KIT</div>
+        <div className="resampleIntro">Drop one clean DRUM STEM. Pattern Translator finds transient families and automatically picks a representative kick, snare, hat and percussion hit. You can replace any result manually below.</div>
+
+        <div className="autoKitSource">
+          <div className="autoKitReadout">
+            <b>{sourceStem?.name ?? "NO DRUM STEM LOADED"}</b>
+            <span>{sourceStem ? "AUTO-EXTRACTION RUNS ON LOAD" : "WAV / MP3 / M4A DRUM STEM"}</span>
+          </div>
+          <label className="processButton autoKitButton">
+            <Scissors size={15} /> {extracting ? "EXTRACTING…" : sourceStem ? "RE-EXTRACT KIT" : "LOAD DRUM STEM"}
+            <input type="file" accept="audio/*" hidden disabled={extracting} onChange={(event) => { const file = event.target.files?.[0]; if (file) void extractStem(file); event.currentTarget.value = ""; }} />
+          </label>
+        </div>
+
+        {extracting && <div className="vintageProgress"><span>ANALYZING TRANSIENTS + BUILDING KIT</span><div className="progressTrack"><div className="progressBlocks" /></div></div>}
+
         <div className="sampleRack">
           {lanes.map((lane) => (
             <div className="sampleSlot" key={lane.name}>
               <b>{lane.name}</b>
-              <span>{lane.file?.name ?? "NO SAMPLE"}</span>
-              <label className="stemUploadButton"><Upload size={13} /> {lane.buffer ? "REPLACE" : "LOAD"}<input type="file" accept="audio/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadSample(lane.name, file); event.currentTarget.value = ""; }} /></label>
+              <span>{lane.file?.name ?? "NOT FOUND / NO SAMPLE"}</span>
+              <label className="stemUploadButton"><Upload size={13} /> {lane.buffer ? "REPLACE" : "LOAD MANUALLY"}<input type="file" accept="audio/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadSample(lane.name, file); event.currentTarget.value = ""; }} /></label>
               <button className="utilityButton" disabled={!lane.buffer} onClick={() => void audition(lane.name)}><Play size={12} /> HIT</button>
             </div>
           ))}
@@ -325,7 +376,7 @@ export function ResampleWorkspace() {
           <button className="exportButton primaryExport" disabled={!rendered} onClick={exportWav}><Download size={14} /> EXPORT WAV</button>
           <button className="exportButton" onClick={exportMidi}>EXPORT MIDI</button>
         </div>
-        <div className="midiWarning">VOICE → PATTERN currently captures rhythmic drum timing. Pitched humming → editable bass/melody MIDI will use the Basic Pitch transcription service in the next pass.</div>
+        <div className="midiWarning">AUTO KIT currently expects a drum stem and uses transient-family analysis, not full-mix source separation. Manual replacement stays available when an extracted hit is wrong. Full beat → stems is the next separation layer.</div>
       </section>
     </section>
   );
