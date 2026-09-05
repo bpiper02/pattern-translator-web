@@ -71,12 +71,11 @@ async function renderMix(stems: StemState[], sourceBpm: number, targetBpm: numbe
   return offline.startRendering();
 }
 
-export function StemEditor({ sourceBpm, targetBpm, globalPitchShift }: {
-  sourceBpm: number;
-  targetBpm: number;
-  globalPitchShift: number;
-}) {
+export function StemEditor() {
   const [stems, setStems] = useState<StemState[]>(INITIAL_STEMS);
+  const [sourceBpm, setSourceBpm] = useState(120);
+  const [targetBpm, setTargetBpm] = useState(120);
+  const [globalPitchShift, setGlobalPitchShift] = useState(0);
   const [mixBuffer, setMixBuffer] = useState<AudioBuffer | null>(null);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -85,13 +84,17 @@ export function StemEditor({ sourceBpm, targetBpm, globalPitchShift }: {
 
   const loadedCount = useMemo(() => stems.filter((stem) => stem.buffer).length, [stems]);
 
-  function updateStem(kind: StemKind, patch: Partial<StemState>) {
+  function invalidate(messageText = "MIX CHANGED — BUILD PREVIEW AGAIN") {
     playbackRef.current?.stop();
     playbackRef.current = null;
     setPlaying(false);
     setMixBuffer(null);
+    setMessage(messageText);
+  }
+
+  function updateStem(kind: StemKind, patch: Partial<StemState>) {
     setStems((current) => current.map((stem) => stem.kind === kind ? { ...stem, ...patch } : stem));
-    setMessage("MIX CHANGED — BUILD PREVIEW AGAIN");
+    invalidate();
   }
 
   async function loadStem(kind: StemKind, file: File) {
@@ -99,8 +102,8 @@ export function StemEditor({ sourceBpm, targetBpm, globalPitchShift }: {
     setMessage(`LOADING ${kind.toUpperCase()}…`);
     try {
       const buffer = await decodeAudio(file);
-      updateStem(kind, { file, buffer });
-      setMessage(`${kind.toUpperCase()} READY — ${buffer.duration.toFixed(1)} SEC`);
+      setStems((current) => current.map((stem) => stem.kind === kind ? { ...stem, file, buffer } : stem));
+      invalidate(`${kind.toUpperCase()} READY — ${buffer.duration.toFixed(1)} SEC`);
     } catch (error) {
       console.error(error);
       setMessage(`ERROR — COULD NOT LOAD ${kind.toUpperCase()}`);
@@ -154,43 +157,21 @@ export function StemEditor({ sourceBpm, targetBpm, globalPitchShift }: {
         Upload separated drum/bass/melody/other stems, edit each layer, preview the combined mix, then export one WAV. Automatic stem splitting is still the next backend step.
       </div>
 
+      <div className="editorMasterControls">
+        <label><span>SOURCE BPM</span><input type="number" min="20" max="300" step="0.1" value={sourceBpm} onChange={(event) => { setSourceBpm(+event.target.value); invalidate(); }} /></label>
+        <label><span>TARGET BPM</span><input type="number" min="20" max="300" step="0.1" value={targetBpm} onChange={(event) => { setTargetBpm(+event.target.value); invalidate(); }} /></label>
+        <label><span>GLOBAL KEY SHIFT</span><select value={globalPitchShift} onChange={(event) => { setGlobalPitchShift(+event.target.value); invalidate(); }}>{Array.from({ length: 25 }, (_, i) => i - 12).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} semitones</option>)}</select></label>
+      </div>
+
       <div className="stemRows">
         {stems.map((stem) => (
           <div className="stemRow" key={stem.kind}>
-            <div className="stemName">
-              <b>{stem.label}</b>
-              <span>{stem.file?.name ?? "NO STEM"}</span>
-            </div>
-
-            <label className="stemUploadButton">
-              <Upload size={13} /> {stem.buffer ? "REPLACE" : "ADD"}
-              <input
-                type="file"
-                accept="audio/*"
-                hidden
-                disabled={busy}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void loadStem(stem.kind, file);
-                  event.currentTarget.value = "";
-                }}
-              />
-            </label>
-
-            <label className="stemSlider">
-              <span>LEVEL {Math.round(stem.gain * 100)}%</span>
-              <input type="range" min="0" max="1.5" step="0.01" value={stem.gain} disabled={!stem.buffer} onChange={(event) => updateStem(stem.kind, { gain: +event.target.value })} />
-            </label>
-
+            <div className="stemName"><b>{stem.label}</b><span>{stem.file?.name ?? "NO STEM"}</span></div>
+            <label className="stemUploadButton"><Upload size={13} /> {stem.buffer ? "REPLACE" : "ADD"}<input type="file" accept="audio/*" hidden disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadStem(stem.kind, file); event.currentTarget.value = ""; }} /></label>
+            <label className="stemSlider"><span>LEVEL {Math.round(stem.gain * 100)}%</span><input type="range" min="0" max="1.5" step="0.01" value={stem.gain} disabled={!stem.buffer} onChange={(event) => updateStem(stem.kind, { gain: +event.target.value })} /></label>
             {stem.kind !== "drums" ? (
-              <label className="stemPitch">
-                <span>EXTRA SHIFT</span>
-                <select value={stem.semitoneOffset} disabled={!stem.buffer} onChange={(event) => updateStem(stem.kind, { semitoneOffset: +event.target.value })}>
-                  {Array.from({ length: 25 }, (_, i) => i - 12).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} st</option>)}
-                </select>
-              </label>
+              <label className="stemPitch"><span>EXTRA SHIFT</span><select value={stem.semitoneOffset} disabled={!stem.buffer} onChange={(event) => updateStem(stem.kind, { semitoneOffset: +event.target.value })}>{Array.from({ length: 25 }, (_, i) => i - 12).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} st</option>)}</select></label>
             ) : <div className="stemPitch passive"><span>PITCH</span><b>KEEP</b></div>}
-
             <button className={stem.muted ? "stemToggle active" : "stemToggle"} disabled={!stem.buffer} onClick={() => updateStem(stem.kind, { muted: !stem.muted })}>MUTE</button>
             <button className={stem.solo ? "stemToggle active" : "stemToggle"} disabled={!stem.buffer} onClick={() => updateStem(stem.kind, { solo: !stem.solo })}>SOLO</button>
           </div>
