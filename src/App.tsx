@@ -1,15 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Download,
-  Drum,
-  Music2,
-  Pause,
-  Play,
-  RotateCcw,
-  SlidersHorizontal,
-  Upload,
-  Wand2,
-} from "lucide-react";
+import { Download, Drum, Music2, Pause, Play, RotateCcw, SlidersHorizontal, Upload, Wand2 } from "lucide-react";
 import { decodeAudio, monoSamples } from "./audio";
 import { audioBufferToWav } from "./audio/wav";
 import { analyzeRhythm, type RhythmAnalysis } from "./analysis/rhythm";
@@ -17,9 +7,10 @@ import { transformAudio } from "./audio/transformAudio";
 import { playRenderedPreview, type DrumPlayback } from "./audio/reconstructDrums";
 import { StemEditor } from "./components/StemEditor";
 import { ResampleWorkspace } from "./components/ResampleWorkspace";
+import { SplitWorkspace } from "./components/SplitWorkspace";
 import { DraftNumberInput } from "./components/DraftNumberInput";
 
-type Workspace = "translate" | "edit" | "resample";
+type Workspace = "translate" | "split" | "edit" | "resample";
 type Mode = "beat" | "drums" | "bass" | "melody";
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -42,41 +33,29 @@ function semitoneDistance(source: string, target: string) {
 }
 
 function VintageProgress({ label }: { label: string }) {
-  return (
-    <div className="vintageProgress" role="status" aria-live="polite">
-      <span>{label}</span>
-      <div className="progressTrack"><div className="progressBlocks" /></div>
-    </div>
-  );
+  return <div className="vintageProgress" role="status" aria-live="polite"><span>{label}</span><div className="progressTrack"><div className="progressBlocks" /></div></div>;
 }
 
 function Waveform({ samples, currentRatio }: { samples: Float32Array | null; currentRatio: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
-
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !samples) return;
-
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, rect.width, rect.height);
-
     const mid = rect.height / 2;
     const step = Math.ceil(samples.length / Math.max(1, rect.width));
     ctx.strokeStyle = "#b8c6b1";
     ctx.lineWidth = 1;
     ctx.beginPath();
-
     for (let x = 0; x < rect.width; x++) {
-      let min = 1;
-      let max = -1;
+      let min = 1, max = -1;
       const start = x * step;
       const end = Math.min(samples.length, start + step);
       for (let i = start; i < end; i++) {
@@ -87,9 +66,7 @@ function Waveform({ samples, currentRatio }: { samples: Float32Array | null; cur
       ctx.moveTo(x, mid + min * mid * 0.82);
       ctx.lineTo(x, mid + max * mid * 0.82);
     }
-
     ctx.stroke();
-
     if (currentRatio > 0) {
       ctx.strokeStyle = "#ffb000";
       ctx.lineWidth = 2;
@@ -100,7 +77,6 @@ function Waveform({ samples, currentRatio }: { samples: Float32Array | null; cur
       ctx.stroke();
     }
   }, [samples, currentRatio]);
-
   return <canvas ref={ref} className="wave" />;
 }
 
@@ -220,10 +196,7 @@ export function App() {
         const audio = audioRef.current;
         if (audio) setRatio(audio.duration ? audio.currentTime / audio.duration : 0);
       };
-      audioRef.current.onended = () => {
-        setPlayingOriginal(false);
-        setRatio(0);
-      };
+      audioRef.current.onended = () => { setPlayingOriginal(false); setRatio(0); };
     }
     if (playingOriginal) {
       audioRef.current.pause();
@@ -283,23 +256,34 @@ export function App() {
     setWorkspace(next);
   }
 
+  const footerText = workspace === "translate"
+    ? "TRANSLATE BPM / PITCH / KEY"
+    : workspace === "split"
+      ? "SOURCE SEPARATION / TIMBRE-PRESERVING STEM PREVIEW"
+      : workspace === "edit"
+        ? "EDIT STEMS / PREVIEW / EXPORT WAV"
+        : "NEW PATTERNS FROM YOUR OWN SOUND KIT";
+
   return (
     <main className="machineShell">
       <header className="machineHeader">
         <div>
           <div className="brandLine"><span>PT</span> PATTERN TRANSLATOR</div>
-          <div className="versionLine">DIRECT AUDIO WORKSTATION // BUILD 0.7</div>
+          <div className="versionLine">DIRECT AUDIO WORKSTATION // BUILD 0.8</div>
         </div>
         <div className="statusTag">LOCAL DSP</div>
       </header>
 
       <nav className="workspaceTabs" aria-label="Workspace">
         <button className={workspace === "translate" ? "active" : ""} onClick={() => switchWorkspace("translate")}>TRANSLATE</button>
+        <button className={workspace === "split" ? "active" : ""} onClick={() => switchWorkspace("split")}>SPLIT</button>
         <button className={workspace === "edit" ? "active" : ""} onClick={() => switchWorkspace("edit")}>EDIT</button>
         <button className={workspace === "resample" ? "active" : ""} onClick={() => switchWorkspace("resample")}>RESAMPLE</button>
       </nav>
 
-      {workspace === "edit" ? (
+      {workspace === "split" ? (
+        <SplitWorkspace />
+      ) : workspace === "edit" ? (
         <StemEditor />
       ) : workspace === "resample" ? (
         <ResampleWorkspace />
@@ -327,15 +311,9 @@ export function App() {
             ) : (
               <>
                 <div className="abDeck">
-                  <div className="abChannel originalChannel">
-                    <span className="abLabel">A // ORIGINAL SOURCE</span>
-                    <button className="abPlayButton" onClick={playOriginal}>{playingOriginal ? <Pause size={15} /> : <Play size={15} />}{playingOriginal ? "PAUSE ORIGINAL" : "PLAY ORIGINAL"}</button>
-                  </div>
+                  <div className="abChannel originalChannel"><span className="abLabel">A // ORIGINAL SOURCE</span><button className="abPlayButton" onClick={playOriginal}>{playingOriginal ? <Pause size={15} /> : <Play size={15} />}{playingOriginal ? "PAUSE ORIGINAL" : "PLAY ORIGINAL"}</button></div>
                   <div className="fileReadout"><b>{file.name}</b><span>{buffer?.duration.toFixed(1)} SEC // {buffer?.sampleRate.toLocaleString()} HZ // {rhythm?.beats.length ?? 0} BEATS</span></div>
-                  <div className="abChannel rebuiltChannel">
-                    <span className="abLabel">B // TRANSLATED WAV</span>
-                    <button className="abPlayButton rebuilt" onClick={playTranslated} disabled={!translatedBuffer}>{playingTranslated ? <Pause size={15} /> : <Play size={15} />}{playingTranslated ? "STOP TRANSLATED" : "PLAY TRANSLATED"}</button>
-                  </div>
+                  <div className="abChannel rebuiltChannel"><span className="abLabel">B // TRANSLATED WAV</span><button className="abPlayButton rebuilt" onClick={playTranslated} disabled={!translatedBuffer}>{playingTranslated ? <Pause size={15} /> : <Play size={15} />}{playingTranslated ? "STOP TRANSLATED" : "PLAY TRANSLATED"}</button></div>
                   <button className="utilityButton" onClick={replaceFile}><RotateCcw size={14} /> EJECT</button>
                 </div>
                 <Waveform samples={samples} currentRatio={ratio} />
@@ -346,55 +324,34 @@ export function App() {
           <section className="module translateModule">
             <div className="moduleTitle">03 // SET TARGET</div>
             <div className="translateGrid">
-              <label className="digitalControl">
-                <span>SOURCE BPM</span>
-                <DraftNumberInput value={sourceBpm} min={20} max={300} step={0.1} onCommit={(value) => { setSourceBpm(value); invalidateTranslation("SOURCE BPM CHANGED — TRANSLATE AGAIN"); }} ariaLabel="Source BPM" />
-              </label>
+              <label className="digitalControl"><span>SOURCE BPM</span><DraftNumberInput value={sourceBpm} min={20} max={300} step={0.1} onCommit={(value) => { setSourceBpm(value); invalidateTranslation("SOURCE BPM CHANGED — TRANSLATE AGAIN"); }} ariaLabel="Source BPM" /></label>
               <div className="flowArrow">▶</div>
-              <label className="digitalControl targetControl">
-                <span>TARGET BPM</span>
-                <DraftNumberInput value={targetBpm} min={20} max={300} step={0.1} onCommit={(value) => { setTargetBpm(value); invalidateTranslation(); }} ariaLabel="Target BPM" />
-              </label>
-
+              <label className="digitalControl targetControl"><span>TARGET BPM</span><DraftNumberInput value={targetBpm} min={20} max={300} step={0.1} onCommit={(value) => { setTargetBpm(value); invalidateTranslation(); }} ariaLabel="Target BPM" /></label>
               {tonalMode ? (
                 <>
-                  <label className="keyControl">
-                    <span>SOURCE KEY</span>
-                    <select value={sourceRoot} onChange={(event) => { setSourceRoot(event.target.value); invalidateTranslation("SOURCE KEY CHANGED — TRANSLATE AGAIN"); }}>{ROOTS.map((root) => <option key={root}>{root}</option>)}</select>
-                  </label>
+                  <label className="keyControl"><span>SOURCE KEY</span><select value={sourceRoot} onChange={(event) => { setSourceRoot(event.target.value); invalidateTranslation("SOURCE KEY CHANGED — TRANSLATE AGAIN"); }}>{ROOTS.map((root) => <option key={root}>{root}</option>)}</select></label>
                   <div className="flowArrow">▶</div>
-                  <label className="keyControl targetControl">
-                    <span>TARGET KEY</span>
-                    <select value={targetRoot} onChange={(event) => { setTargetRoot(event.target.value); invalidateTranslation(); }}>{ROOTS.map((root) => <option key={root}>{root}</option>)}</select>
-                  </label>
+                  <label className="keyControl targetControl"><span>TARGET KEY</span><select value={targetRoot} onChange={(event) => { setTargetRoot(event.target.value); invalidateTranslation(); }}>{ROOTS.map((root) => <option key={root}>{root}</option>)}</select></label>
                 </>
               ) : (
                 <>
                   <div className="keyControl passiveControl"><span>SOURCE PITCH</span><b>ORIGINAL</b></div>
                   <div className="flowArrow">▶</div>
-                  <label className="keyControl targetControl">
-                    <span>DRUM PITCH SHIFT</span>
-                    <select value={drumPitchShift} onChange={(event) => { setDrumPitchShift(+event.target.value); invalidateTranslation(); }}>{SEMITONES.map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} semitones</option>)}</select>
-                  </label>
+                  <label className="keyControl targetControl"><span>DRUM PITCH SHIFT</span><select value={drumPitchShift} onChange={(event) => { setDrumPitchShift(+event.target.value); invalidateTranslation(); }}>{SEMITONES.map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} semitones</option>)}</select></label>
                 </>
               )}
             </div>
-
             <div className="actionRail">
               {busy ? <VintageProgress label={message} /> : <div className="lcdStatus">{message}</div>}
               <button className="processButton" disabled={!file || busy} onClick={() => void translate()}><Wand2 size={17} /> {busy ? "PROCESSING…" : "TRANSLATE AUDIO"}</button>
             </div>
-
-            {mode === "beat" && <div className="midiWarning">FULL BEAT MODE transforms the whole mix. For cleaner key changes that leave drums untouched, use separated stems in the EDIT workspace.</div>}
+            {mode === "beat" && <div className="midiWarning">FULL BEAT MODE transforms the whole mix. For cleaner key changes that leave drums untouched, use separated stems in SPLIT / EDIT.</div>}
           </section>
 
           <section className="module patternModule">
             <div className="moduleTitle">04 // RESULT</div>
             <div className="resultPanel">
-              <div>
-                <b>{translatedBuffer ? "TRANSLATED WAV READY" : "NO TRANSLATED WAV YET"}</b>
-                <span>{translatedBuffer ? `${translatedBuffer.duration.toFixed(1)} SEC // ${targetBpm} BPM // ${tonalMode ? targetRoot : `${drumPitchShift >= 0 ? "+" : ""}${drumPitchShift} ST`}` : "SET TARGETS, THEN PRESS TRANSLATE AUDIO"}</span>
-              </div>
+              <div><b>{translatedBuffer ? "TRANSLATED WAV READY" : "NO TRANSLATED WAV YET"}</b><span>{translatedBuffer ? `${translatedBuffer.duration.toFixed(1)} SEC // ${targetBpm} BPM // ${tonalMode ? targetRoot : `${drumPitchShift >= 0 ? "+" : ""}${drumPitchShift} ST`}` : "SET TARGETS, THEN PRESS TRANSLATE AUDIO"}</span></div>
               <button className="exportButton primaryExport" disabled={!translatedBuffer} onClick={exportTranslated}><Download size={15} /> EXPORT TRANSLATED WAV</button>
             </div>
           </section>
@@ -403,7 +360,7 @@ export function App() {
 
       <footer className="machineFooter">
         <span><SlidersHorizontal size={12} /> DIRECT AUDIO WORKSTATION</span>
-        <span>{workspace === "translate" ? "TRANSLATE BPM / PITCH / KEY" : workspace === "edit" ? "EDIT STEMS / PREVIEW / EXPORT WAV" : "NEW PATTERNS FROM YOUR OWN SOUND KIT"}</span>
+        <span>{footerText}</span>
       </footer>
     </main>
   );
