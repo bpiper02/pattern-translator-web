@@ -1,0 +1,7 @@
+.autoKitSource{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch;margin:8px 0}
+.autoKitReadout{background:#1e2a27;border:2px inset #809084;padding:9px 10px;font-family:"Courier New",monospace;color:#8dff70;min-width:0}
+.autoKitReadout b{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.autoKitReadout span{display:block;margin-top:4px;font-size:9px;color:#69bd5c}
+.autoKitButton{cursor:pointer;justify-content:center;min-width:180px}
+.resampleWorkspace .vintageProgress{margin:8px 0}
+@media(max-width:700px){.autoKitSource{grid-template-columns:1fr}.autoKitButton{min-width:0}}
