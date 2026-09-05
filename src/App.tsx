@@ -17,6 +17,7 @@ import { transformAudio } from "./audio/transformAudio";
 import { playRenderedPreview, type DrumPlayback } from "./audio/reconstructDrums";
 import { StemEditor } from "./components/StemEditor";
 import { ResampleWorkspace } from "./components/ResampleWorkspace";
+import { DraftNumberInput } from "./components/DraftNumberInput";
 
 type Workspace = "translate" | "edit" | "resample";
 type Mode = "beat" | "drums" | "bass" | "melody";
@@ -347,12 +348,12 @@ export function App() {
             <div className="translateGrid">
               <label className="digitalControl">
                 <span>SOURCE BPM</span>
-                <input type="number" min="20" max="300" step="0.1" value={sourceBpm} onChange={(event) => { setSourceBpm(+event.target.value); invalidateTranslation("SOURCE BPM CHANGED — TRANSLATE AGAIN"); }} />
+                <DraftNumberInput value={sourceBpm} min={20} max={300} step={0.1} onCommit={(value) => { setSourceBpm(value); invalidateTranslation("SOURCE BPM CHANGED — TRANSLATE AGAIN"); }} ariaLabel="Source BPM" />
               </label>
               <div className="flowArrow">▶</div>
               <label className="digitalControl targetControl">
                 <span>TARGET BPM</span>
-                <input type="number" min="20" max="300" step="0.1" value={targetBpm} onChange={(event) => { setTargetBpm(+event.target.value); invalidateTranslation(); }} />
+                <DraftNumberInput value={targetBpm} min={20} max={300} step={0.1} onCommit={(value) => { setTargetBpm(value); invalidateTranslation(); }} ariaLabel="Target BPM" />
               </label>
 
               {tonalMode ? (
