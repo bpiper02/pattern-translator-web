@@ -37,7 +37,7 @@ jobs:
 
       - name: Essentia monophonic pitch spike
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
-        run: node qa/essentia-pitch-spike.mjs
+        run: node qa/essentia-pitch-spike.cjs
 
       - name: Build
         run: npm run build
