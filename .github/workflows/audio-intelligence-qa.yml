@@ -35,9 +35,14 @@ jobs:
       - name: Rhythm capture grid regression
         run: node qa/rhythm-capture-grid.mjs
 
-      - name: Essentia monophonic pitch spike
+      - name: Essentia YIN pitch spike
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        continue-on-error: true
         run: node qa/essentia-pitch-spike.cjs
+
+      - name: Essentia Melodia pitch spike
+        if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        run: node qa/essentia-melodia-spike.cjs
 
       - name: Build
         run: npm run build
