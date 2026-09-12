@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Download, Mic, Pause, Play, Scissors, Square, Upload } from "lucide-react";
 import * as Tone from "tone";
 import { decodeAudio, monoSamples, type DrumHit } from "../audio";
+import { quantizeRhythmCapture } from "../analysis/rhythmCapture";
 import { detectVoiceRhythmOnsets } from "../analysis/voiceRhythm";
+import { recordOneBarRhythm } from "../audio/captureRhythm";
 import { audioBufferToWav } from "../audio/wav";
 import { extractAutoDrumKit, type AutoKitLane } from "../audio/autoDrumKit";
 import { drumsMidi } from "../midi";
@@ -81,6 +83,8 @@ export function ResampleWorkspace() {
   const [extracting, setExtracting] = useState(false);
   const [sourceStem, setSourceStem] = useState<File | null>(null);
   const [recording, setRecording] = useState(false);
+  const [countIn, setCountIn] = useState<number | null>(null);
+  const [processingVoice, setProcessingVoice] = useState(false);
   const [voiceLane, setVoiceLane] = useState<LaneName>("KICK");
   const [message, setMessage] = useState("DROP ONE DRUM STEM TO BUILD A KIT, OR LOAD YOUR OWN ONE-SHOTS");
 
@@ -88,9 +92,7 @@ export function ResampleWorkspace() {
   const scheduleRef = useRef<number | null>(null);
   const patternRef = useRef(lanes);
   const sourcePatternRef = useRef(sourcePattern);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
+  const voiceCaptureAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { patternRef.current = lanes; }, [lanes]);
   useEffect(() => { sourcePatternRef.current = sourcePattern; }, [sourcePattern]);
@@ -100,7 +102,7 @@ export function ResampleWorkspace() {
     if (scheduleRef.current !== null) Tone.getTransport().clear(scheduleRef.current);
     playersRef.current.forEach((player) => player.dispose());
     patternRef.current.forEach((lane) => { if (lane.url) URL.revokeObjectURL(lane.url); });
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    voiceCaptureAbortRef.current?.abort();
   }, []);
 
   const loadedCount = useMemo(() => lanes.filter((lane) => lane.buffer).length, [lanes]);
@@ -108,6 +110,7 @@ export function ResampleWorkspace() {
     () => LANES.some((lane) => sourcePattern[lane].some(Boolean)),
     [sourcePattern],
   );
+  const voiceCaptureActive = recording || countIn !== null;
 
   function invalidate(next = "PATTERN CHANGED — PREVIEW / EXPORT WILL USE CURRENT STEPS") {
     setRendered(null);
@@ -277,51 +280,62 @@ export function ResampleWorkspace() {
   }
 
   async function startVoiceCapture() {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setMessage("VOICE INPUT IS NOT AVAILABLE IN THIS BROWSER");
-      return;
-    }
+    if (voiceCaptureActive || processingVoice) return;
+    const controller = new AbortController();
+    voiceCaptureAbortRef.current = controller;
+    const captureBpm = bpm;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
-      recorderRef.current = recorder;
-      chunksRef.current = [];
-      recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
-      recorder.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        try {
-          const file = new File([blob], "voice-pattern.webm", { type: blob.type });
-          const buffer = await decodeAudio(file);
-          const mono = monoSamples(buffer);
-          const onsets = detectVoiceRhythmOnsets(mono, buffer.sampleRate);
-          const stepSeconds = 60 / bpm / 4;
-          const activeSteps = new Set(onsets.map((seconds) => Math.max(0, Math.min(STEPS - 1, Math.round(seconds / stepSeconds) % STEPS))));
-          setLanes((current) => current.map((lane) => lane.name === voiceLane ? {
-            ...lane,
-            steps: lane.steps.map((value, step) => value || activeSteps.has(step)),
-          } : lane));
-          invalidate(`VOICE → ${voiceLane} PATTERN — ${activeSteps.size} STEPS CAPTURED`);
-        } catch (error) {
-          console.error(error);
-          setMessage("ERROR — COULD NOT ANALYZE VOICE INPUT");
-        }
-      };
-      recorder.start();
-      setRecording(true);
-      setMessage(`RECORDING RHYTHM FOR ${voiceLane} — TAP / BEATBOX THE HITS`);
+      const blob = await recordOneBarRhythm({
+        bpm: captureBpm,
+        signal: controller.signal,
+        onPhase: (phase) => {
+          if (phase.phase === "count-in") {
+            setCountIn(phase.beat);
+            setRecording(false);
+            setProcessingVoice(false);
+            setMessage(`COUNT-IN ${phase.beat} — GET READY FOR ${voiceLane}`);
+          } else if (phase.phase === "recording") {
+            setCountIn(null);
+            setRecording(true);
+            setProcessingVoice(false);
+            setMessage(`GO — BEATBOX / TAP ${voiceLane} FOR ONE BAR`);
+          } else {
+            setCountIn(null);
+            setRecording(false);
+            setProcessingVoice(true);
+            setMessage("ANALYZING VOICE RHYTHM…");
+          }
+        },
+      });
+
+      const file = new File([blob], "voice-pattern.webm", { type: blob.type });
+      const buffer = await decodeAudio(file);
+      const mono = monoSamples(buffer);
+      const onsets = detectVoiceRhythmOnsets(mono, buffer.sampleRate);
+      const activeSteps = new Set(quantizeRhythmCapture(onsets, { bpm: captureBpm, steps: STEPS }));
+      setLanes((current) => current.map((lane) => lane.name === voiceLane ? {
+        ...lane,
+        steps: lane.steps.map((value, step) => value || activeSteps.has(step)),
+      } : lane));
+      invalidate(`VOICE → ${voiceLane} PATTERN — ${activeSteps.size} STEPS CAPTURED`);
     } catch (error) {
-      console.error(error);
-      setMessage("MIC ACCESS WAS NOT AVAILABLE");
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setMessage("VOICE CAPTURE CANCELLED");
+      } else {
+        console.error(error);
+        setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "COULD NOT ANALYZE VOICE INPUT"}`);
+      }
+    } finally {
+      setRecording(false);
+      setCountIn(null);
+      setProcessingVoice(false);
+      if (voiceCaptureAbortRef.current === controller) voiceCaptureAbortRef.current = null;
     }
   }
 
-  function stopVoiceCapture() {
-    recorderRef.current?.stop();
-    recorderRef.current = null;
-    setRecording(false);
+  function cancelVoiceCapture() {
+    voiceCaptureAbortRef.current?.abort();
   }
 
   return (
@@ -400,15 +414,22 @@ export function ResampleWorkspace() {
       <section className="module">
         <div className="moduleTitle">03 // VOICE → PATTERN BETA</div>
         <div className="voiceCapture">
-          <label className="miniControl"><span>VOICE TARGET</span><select value={voiceLane} onChange={(event) => setVoiceLane(event.target.value as LaneName)}>{LANES.map((lane) => <option key={lane}>{lane}</option>)}</select></label>
-          <button className={recording ? "recordButton active" : "recordButton"} onClick={() => recording ? stopVoiceCapture() : void startVoiceCapture()}>{recording ? <Square size={14} /> : <Mic size={14} />}{recording ? "STOP + CONVERT" : "RECORD RHYTHM"}</button>
-          <div className="voiceNote">Beatbox/tap one part at a time. The browser detects hit timing and writes it into the selected working lane; then you can fix any step manually before preview/export.</div>
+          <label className="miniControl"><span>VOICE TARGET</span><select value={voiceLane} disabled={voiceCaptureActive || processingVoice} onChange={(event) => setVoiceLane(event.target.value as LaneName)}>{LANES.map((lane) => <option key={lane}>{lane}</option>)}</select></label>
+          <button
+            className={voiceCaptureActive ? "recordButton active" : "recordButton"}
+            disabled={processingVoice}
+            onClick={() => voiceCaptureActive ? cancelVoiceCapture() : void startVoiceCapture()}
+          >
+            {voiceCaptureActive ? <Square size={14} /> : <Mic size={14} />}
+            {countIn !== null ? `START IN ${countIn}` : recording ? "CANCEL CAPTURE" : processingVoice ? "ANALYZING…" : "RECORD 1 BAR"}
+          </button>
+          <div className="voiceNote">One sound at a time. Follow the 4-beat visual count-in, then beatbox/tap exactly one bar. Capture auto-stops; echo cancellation, noise suppression and auto-gain are disabled when the browser allows it.</div>
         </div>
       </section>
 
       <section className="module">
         <div className="moduleTitle">04 // PREVIEW + EXPORT</div>
-        <div className="resampleStatus">{rendering ? <><span>RENDERING 4-BAR WAV</span><div className="progressTrack"><div className="progressBlocks" /></div></> : message}</div>
+        <div className="resampleStatus">{rendering ? <><span>RENDERING 4-BAR WAV</span><div className="progressTrack"><div className="progressBlocks" /></div></div> : message}</div>
         <div className="resampleActions">
           <button className="processButton" disabled={rendering || !loadedCount} onClick={() => void buildWav()}>BUILD 4-BAR WAV</button>
           <button className="exportButton primaryExport" disabled={!rendered} onClick={exportWav}><Download size={14} /> EXPORT WAV</button>
