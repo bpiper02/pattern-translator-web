@@ -49,9 +49,15 @@ jobs:
         continue-on-error: true
         run: node qa/essentia-melodia-spike.cjs
 
-      - name: Spotify Basic Pitch note spike
+      - name: Spotify Basic Pitch parameter sweep
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        continue-on-error: true
         run: node qa/basic-pitch-spike.cjs
+
+      - name: Spotify Basic Pitch strict evaluator
+        if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        continue-on-error: true
+        run: node qa/basic-pitch-strict-spike.cjs
 
       - name: Build
         run: npm run build
