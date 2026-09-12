@@ -6,3 +6,4 @@ backend/.venv/
 backend/data/
 __pycache__/
 *.pyc
+*.tsbuildinfo
