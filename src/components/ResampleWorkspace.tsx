@@ -429,7 +429,7 @@ export function ResampleWorkspace() {
 
       <section className="module">
         <div className="moduleTitle">04 // PREVIEW + EXPORT</div>
-        <div className="resampleStatus">{rendering ? <><span>RENDERING 4-BAR WAV</span><div className="progressTrack"><div className="progressBlocks" /></div></div></> : message}</div>
+        <div className="resampleStatus">{rendering ? <><span>RENDERING 4-BAR WAV</span><div className="progressTrack"><div className="progressBlocks" /></div></> : message}</div>
         <div className="resampleActions">
           <button className="processButton" disabled={rendering || !loadedCount} onClick={() => void buildWav()}>BUILD 4-BAR WAV</button>
           <button className="exportButton primaryExport" disabled={!rendered} onClick={exportWav}><Download size={14} /> EXPORT WAV</button>
