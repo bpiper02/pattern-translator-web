@@ -23,6 +23,10 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Install Basic Pitch for bakeoff
+        if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        run: npm install --no-save --legacy-peer-deps @spotify/basic-pitch@1.0.1
+
       - name: Current detector baseline
         run: node qa/audio-intelligence-baseline.mjs
 
@@ -42,7 +46,12 @@ jobs:
 
       - name: Essentia Melodia pitch spike
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        continue-on-error: true
         run: node qa/essentia-melodia-spike.cjs
+
+      - name: Spotify Basic Pitch note spike
+        if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        run: node qa/basic-pitch-spike.cjs
 
       - name: Build
         run: npm run build
