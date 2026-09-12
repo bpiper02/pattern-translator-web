@@ -94,6 +94,96 @@ function matchNotes(expected, actual) {
   };
 }
 
+function windowRms(samples, startSeconds, endSeconds) {
+  const start = Math.max(0, Math.floor(startSeconds * SR));
+  const end = Math.min(samples.length, Math.ceil(endSeconds * SR));
+  if (end <= start) return 0;
+  let sum = 0;
+  for (let i = start; i < end; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / (end - start));
+}
+
+function adaptiveSilenceThreshold(samples) {
+  const windowSeconds = 0.02;
+  const rms = [];
+  for (let t = 0; t < samples.length / SR; t += windowSeconds) {
+    rms.push(windowRms(samples, t, Math.min(samples.length / SR, t + windowSeconds)));
+  }
+  rms.sort((a, b) => a - b);
+  const p20 = rms[Math.floor(rms.length * 0.2)] ?? 0;
+  const p90 = rms[Math.floor(rms.length * 0.9)] ?? 0;
+  return Math.max(0.003, p20 * 2.5, p90 * 0.10);
+}
+
+function hasEnergyDip(samples, boundarySeconds, threshold) {
+  const radius = 0.055;
+  const step = 0.01;
+  const width = 0.018;
+  let minimum = Infinity;
+  for (let t = boundarySeconds - radius; t <= boundarySeconds + radius; t += step) {
+    minimum = Math.min(minimum, windowRms(samples, t - width / 2, t + width / 2));
+  }
+  return minimum <= threshold;
+}
+
+function mergePair(a, b) {
+  const aEnd = a.startTimeSeconds + a.durationSeconds;
+  const bEnd = b.startTimeSeconds + b.durationSeconds;
+  const aWeight = Math.max(0.001, a.durationSeconds * (a.amplitude ?? 1));
+  const bWeight = Math.max(0.001, b.durationSeconds * (b.amplitude ?? 1));
+  return {
+    startTimeSeconds: Math.min(a.startTimeSeconds, b.startTimeSeconds),
+    durationSeconds: Math.max(aEnd, bEnd) - Math.min(a.startTimeSeconds, b.startTimeSeconds),
+    pitchMidi: Math.round((a.pitchMidi * aWeight + b.pitchMidi * bWeight) / (aWeight + bWeight)),
+    amplitude: Math.max(a.amplitude ?? 0, b.amplitude ?? 0),
+  };
+}
+
+function consolidateMonophonic(notes, samples) {
+  const ordered = notes
+    .filter((note) => Number.isFinite(note.pitchMidi) && note.durationSeconds > 0.035)
+    .sort((a, b) => a.startTimeSeconds - b.startTimeSeconds || (b.amplitude ?? 0) - (a.amplitude ?? 0));
+  if (ordered.length < 2) return ordered;
+
+  const threshold = adaptiveSilenceThreshold(samples);
+  const out = [];
+  for (const note of ordered) {
+    if (!out.length) {
+      out.push({ ...note });
+      continue;
+    }
+    const previous = out[out.length - 1];
+    const previousEnd = previous.startTimeSeconds + previous.durationSeconds;
+    const noteEnd = note.startTimeSeconds + note.durationSeconds;
+    const overlap = Math.min(previousEnd, noteEnd) - Math.max(previous.startTimeSeconds, note.startTimeSeconds);
+    const gap = note.startTimeSeconds - previousEnd;
+    const pitchDistance = Math.abs(note.pitchMidi - previous.pitchMidi);
+    const boundary = Math.max(previous.startTimeSeconds, Math.min(note.startTimeSeconds, previousEnd));
+    const articulated = hasEnergyDip(samples, boundary, threshold);
+
+    // Vocal hum/sing is monophonic: overlapping or tiny-gap candidates within one
+    // semitone are normally vibrato/decoder fragmentation, unless the waveform
+    // actually re-articulates through a low-energy boundary.
+    const nearPitch = pitchDistance <= 1;
+    const temporallyConnected = overlap >= -0.015 || gap <= 0.085;
+    if (nearPitch && temporallyConnected && !articulated) {
+      out[out.length - 1] = mergePair(previous, note);
+      continue;
+    }
+
+    // When Basic Pitch emits simultaneous near-duplicate notes, keep the stronger
+    // candidate instead of allowing impossible polyphony in monophonic mode.
+    if (overlap > 0.04 && pitchDistance <= 2) {
+      const previousStrength = (previous.amplitude ?? 0) * previous.durationSeconds;
+      const nextStrength = (note.amplitude ?? 0) * note.durationSeconds;
+      if (nextStrength > previousStrength) out[out.length - 1] = { ...note };
+      continue;
+    }
+    out.push({ ...note });
+  }
+  return out;
+}
+
 async function loadPackagedModel() {
   const packageDir = path.dirname(require.resolve("@spotify/basic-pitch/package.json"));
   const modelPath = path.join(packageDir, "model", "model.json");
@@ -117,7 +207,7 @@ async function loadPackagedModel() {
   return tf.loadGraphModel(handler);
 }
 
-async function transcribe(engine, samples) {
+async function infer(engine, samples) {
   const frames = [];
   const onsets = [];
   const contours = [];
@@ -130,7 +220,22 @@ async function transcribe(engine, samples) {
     },
     () => {},
   );
-  const frameNotes = outputToNotesPoly(frames, onsets, 0.5, 0.3, 5, true, 1000, 55, true, 11);
+  return { frames, onsets, contours };
+}
+
+function decode(modelOutput, config) {
+  const frameNotes = outputToNotesPoly(
+    modelOutput.frames.map((row) => [...row]),
+    modelOutput.onsets.map((row) => [...row]),
+    config.onset,
+    config.frame,
+    config.minLen,
+    config.inferOnsets,
+    1000,
+    55,
+    true,
+    config.energyTolerance,
+  );
   return noteFramesToTime(frameNotes);
 }
 
@@ -160,6 +265,29 @@ const fixtures = [
     notes: [{ midi: 48, duration: 0.65, amplitude: 0.7 }, { midi: null, duration: 0.08, amplitude: 0 }, { midi: 60, duration: 0.65, amplitude: 0.7 }],
     options: {},
   },
+  {
+    name: "short-notes",
+    notes: [60, 64, 67, 64].flatMap((midi) => [{ midi, duration: 0.18, amplitude: 0.72 }, { midi: null, duration: 0.055, amplitude: 0 }]),
+    options: {},
+  },
+  {
+    name: "legato-steps",
+    notes: [60, 62, 64, 67].map((midi) => ({ midi, duration: 0.38, amplitude: 0.7 })),
+    options: {},
+  },
+  {
+    name: "low-voice",
+    notes: [45, 48, 52, 55].flatMap((midi) => [{ midi, duration: 0.42, amplitude: 0.72 }, { midi: null, duration: 0.07, amplitude: 0 }]),
+    options: { noise: 0.004 },
+  },
+];
+
+const configs = [
+  { name: "spotify-readme", onset: 0.25, frame: 0.25, minLen: 5, inferOnsets: true, energyTolerance: 11 },
+  { name: "balanced-035", onset: 0.35, frame: 0.25, minLen: 5, inferOnsets: true, energyTolerance: 11 },
+  { name: "legacy-spike", onset: 0.5, frame: 0.3, minLen: 5, inferOnsets: true, energyTolerance: 11 },
+  { name: "no-inferred", onset: 0.3, frame: 0.25, minLen: 5, inferOnsets: false, energyTolerance: 11 },
+  { name: "longer-min", onset: 0.3, frame: 0.25, minLen: 8, inferOnsets: true, energyTolerance: 11 },
 ];
 
 (async () => {
@@ -167,32 +295,61 @@ const fixtures = [
   await tf.ready();
   const model = await loadPackagedModel();
   const engine = new BasicPitch(Promise.resolve(model));
-  const rows = [];
 
+  const inferredFixtures = [];
   for (const fixture of fixtures) {
-    const expected = truthEvents(fixture.notes);
+    const samples = synth(fixture.notes, fixture.options);
     const started = Date.now();
-    const actual = await transcribe(engine, synth(fixture.notes, fixture.options));
-    const runtimeMs = Date.now() - started;
-    rows.push({ name: fixture.name, expected: expected.length, actual: actual.length, runtimeMs, ...matchNotes(expected, actual) });
+    const modelOutput = await infer(engine, samples);
+    inferredFixtures.push({ fixture, samples, modelOutput, runtimeMs: Date.now() - started });
   }
 
-  console.table(rows.map((row) => ({
-    case: row.name,
-    expected: row.expected,
-    actual: row.actual,
-    f1: row.f1.toFixed(3),
-    pitch_semitones: Number.isFinite(row.pitchMaeSemitones) ? row.pitchMaeSemitones.toFixed(3) : "inf",
-    onset_ms: Number.isFinite(row.onsetMaeMs) ? row.onsetMaeMs.toFixed(1) : "inf",
-    duration_ms: Number.isFinite(row.durationMaeMs) ? row.durationMaeMs.toFixed(1) : "inf",
-    extra_notes: row.fragmentation,
-    runtime_ms: row.runtimeMs,
-  })));
+  const summaries = [];
+  for (const config of configs) {
+    const rows = [];
+    for (const item of inferredFixtures) {
+      const expected = truthEvents(item.fixture.notes);
+      const raw = decode(item.modelOutput, config);
+      const actual = consolidateMonophonic(raw, item.samples);
+      rows.push({
+        name: item.fixture.name,
+        expected: expected.length,
+        raw: raw.length,
+        actual: actual.length,
+        runtimeMs: item.runtimeMs,
+        ...matchNotes(expected, actual),
+      });
+    }
 
-  const macroF1 = rows.reduce((sum, row) => sum + row.f1, 0) / rows.length;
-  assert.ok(macroF1 >= 0.85, `Basic Pitch macro F1 ${macroF1.toFixed(3)} below bakeoff gate`);
-  for (const row of rows) assert.ok(row.f1 >= 0.75, `${row.name}: F1 ${row.f1.toFixed(3)} below floor`);
-  console.log(`BASIC PITCH SPIKE: PASS (macro F1=${macroF1.toFixed(3)})`);
+    const macroF1 = rows.reduce((sum, row) => sum + row.f1, 0) / rows.length;
+    const minF1 = Math.min(...rows.map((row) => row.f1));
+    const extras = rows.reduce((sum, row) => sum + row.fragmentation, 0);
+    summaries.push({ config, rows, macroF1, minF1, extras });
+
+    console.log(`\nCONFIG ${config.name}`);
+    console.table(rows.map((row) => ({
+      case: row.name,
+      expected: row.expected,
+      raw: row.raw,
+      consolidated: row.actual,
+      f1: row.f1.toFixed(3),
+      pitch_semitones: Number.isFinite(row.pitchMaeSemitones) ? row.pitchMaeSemitones.toFixed(3) : "inf",
+      onset_ms: Number.isFinite(row.onsetMaeMs) ? row.onsetMaeMs.toFixed(1) : "inf",
+      duration_ms: Number.isFinite(row.durationMaeMs) ? row.durationMaeMs.toFixed(1) : "inf",
+      extra_notes: row.fragmentation,
+      inference_ms: row.runtimeMs,
+    })));
+    console.log(`macro F1=${macroF1.toFixed(3)} min F1=${minF1.toFixed(3)} extras=${extras}`);
+  }
+
+  summaries.sort((a, b) => (b.macroF1 - a.macroF1) || (b.minF1 - a.minF1) || (a.extras - b.extras));
+  const best = summaries[0];
+  console.log(`\nBEST CONFIG: ${best.config.name} macro F1=${best.macroF1.toFixed(3)} min F1=${best.minF1.toFixed(3)} extras=${best.extras}`);
+
+  assert.ok(best.macroF1 >= 0.88, `Basic Pitch best macro F1 ${best.macroF1.toFixed(3)} below bakeoff gate`);
+  assert.ok(best.minF1 >= 0.75, `Basic Pitch best fixture F1 ${best.minF1.toFixed(3)} below floor`);
+  assert.ok(best.rows.find((row) => row.name === "vibrato").f1 >= 0.8, "Basic Pitch vibrato still fragments badly");
+  console.log("BASIC PITCH SPIKE: PASS");
   model.dispose();
   tf.disposeVariables();
 })().catch((error) => {
