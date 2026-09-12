@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/audio-intelligence-overhaul
+      - spike/melody-transcription-bakeoff
   workflow_dispatch:
 
 jobs:
@@ -33,6 +34,10 @@ jobs:
 
       - name: Rhythm capture grid regression
         run: node qa/rhythm-capture-grid.mjs
+
+      - name: Essentia monophonic pitch spike
+        if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        run: node qa/essentia-pitch-spike.mjs
 
       - name: Build
         run: npm run build
