@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Download, Mic, Pause, Play, Scissors, Square, Upload } from "lucide-react";
 import * as Tone from "tone";
 import { decodeAudio, monoSamples, type DrumHit } from "../audio";
+import { detectVoiceRhythmOnsets } from "../analysis/voiceRhythm";
 import { audioBufferToWav } from "../audio/wav";
 import { extractAutoDrumKit, type AutoKitLane } from "../audio/autoDrumKit";
 import { drumsMidi } from "../midi";
@@ -42,33 +43,6 @@ function downloadBlob(blob: Blob, name: string) {
   anchor.download = name;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 500);
-}
-
-function detectVoiceOnsets(samples: Float32Array, sampleRate: number) {
-  const frame = Math.max(128, Math.round(sampleRate * 0.012));
-  const hop = Math.max(64, Math.round(frame / 2));
-  const energies: number[] = [];
-  for (let start = 0; start + frame < samples.length; start += hop) {
-    let sum = 0;
-    for (let i = start; i < start + frame; i++) sum += samples[i] * samples[i];
-    energies.push(Math.sqrt(sum / frame));
-  }
-  if (!energies.length) return [];
-  const sorted = [...energies].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-  const threshold = Math.max(0.015, median * 2.4);
-  const minGapFrames = Math.max(1, Math.round(0.09 * sampleRate / hop));
-  const onsets: number[] = [];
-  let last = -minGapFrames;
-  for (let i = 1; i < energies.length - 1; i++) {
-    const rising = energies[i] > threshold && energies[i] > energies[i - 1] * 1.2;
-    const peak = energies[i] >= energies[i + 1];
-    if (rising && peak && i - last >= minGapFrames) {
-      onsets.push((i * hop) / sampleRate);
-      last = i;
-    }
-  }
-  return onsets;
 }
 
 async function renderPattern(lanes: LaneState[], bpm: number, bars = 4) {
@@ -322,7 +296,7 @@ export function ResampleWorkspace() {
           const file = new File([blob], "voice-pattern.webm", { type: blob.type });
           const buffer = await decodeAudio(file);
           const mono = monoSamples(buffer);
-          const onsets = detectVoiceOnsets(mono, buffer.sampleRate);
+          const onsets = detectVoiceRhythmOnsets(mono, buffer.sampleRate);
           const stepSeconds = 60 / bpm / 4;
           const activeSteps = new Set(onsets.map((seconds) => Math.max(0, Math.min(STEPS - 1, Math.round(seconds / stepSeconds) % STEPS))));
           setLanes((current) => current.map((lane) => lane.name === voiceLane ? {
