@@ -25,11 +25,14 @@ jobs:
       - name: Current detector baseline
         run: node qa/audio-intelligence-baseline.mjs
 
-      - name: Compile voice rhythm detector for regression
-        run: npx tsc src/analysis/voiceRhythm.ts --outDir .qa-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+      - name: Compile audio intelligence modules for regression
+        run: npx tsc src/analysis/voiceRhythm.ts src/analysis/rhythmCapture.ts --outDir .qa-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Voice rhythm regression
         run: node qa/voice-rhythm-regression.mjs
+
+      - name: Rhythm capture grid regression
+        run: node qa/rhythm-capture-grid.mjs
 
       - name: Build
         run: npm run build
