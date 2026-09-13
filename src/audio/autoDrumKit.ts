@@ -4,6 +4,7 @@ import { analyzeRhythm } from "../analysis/rhythm";
 import { alignHitsToBeatGrid, beatToStep } from "../analysis/drumGrid";
 import { nextDistinctEventTime } from "./drumSlice";
 import { selectRepresentativeDrumHit } from "./drumRepresentative";
+import { applySafetyFadeOut, findAdaptiveDrumSliceBounds } from "./drumEnvelopeSlice";
 
 export type AutoKitLane = "KICK" | "SNARE" | "HAT" | "PERC";
 
@@ -29,16 +30,11 @@ function copySlice(source: AudioBuffer, startSeconds: number, endSeconds: number
   });
 
   for (let channel = 0; channel < source.numberOfChannels; channel++) {
-    output.getChannelData(channel).set(source.getChannelData(channel).subarray(start, end));
+    const channelData = output.getChannelData(channel);
+    channelData.set(source.getChannelData(channel).subarray(start, end));
+    applySafetyFadeOut(channelData, sampleRate);
   }
   return output;
-}
-
-function laneTailSeconds(lane: AutoKitLane) {
-  if (lane === "KICK") return 0.42;
-  if (lane === "SNARE") return 0.32;
-  if (lane === "HAT") return 0.20;
-  return 0.28;
 }
 
 export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResult {
@@ -80,20 +76,24 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
     counts[lane] = candidates.length;
     if (!candidates.length) continue;
 
-    // Pick the source-local timbre medoid with the cleanest surrounding space,
-    // rather than blindly choosing the loudest accent/layered transient.
     const selected = selectRepresentativeDrumHit(candidates, hits);
     if (!selected) continue;
 
-    const preRoll = 0.004;
-    const maxTail = laneTailSeconds(lane);
-    const start = Math.max(0, selected.time - preRoll);
     const nextTime = nextDistinctEventTime(hits, selected.time);
-    const nextBoundary = nextTime != null
-      ? Math.max(start + 0.025, nextTime - preRoll)
-      : selected.time + maxTail;
-    const end = Math.min(source.duration, selected.time + maxTail, nextBoundary);
-    lanes[lane] = copySlice(source, start, end);
+    const bounds = findAdaptiveDrumSliceBounds(
+      samples,
+      source.sampleRate,
+      selected.time,
+      nextTime,
+      {
+        // A generous safety ceiling replaces the old lane-specific fixed tails.
+        // Actual end time is determined from the source decay/noise envelope.
+        maxTailSeconds: 1.8,
+      },
+    );
+
+    if (bounds.endSeconds <= bounds.startSeconds) continue;
+    lanes[lane] = copySlice(source, bounds.startSeconds, bounds.endSeconds);
   }
 
   return { lanes, counts, totalOnsets: hits.length, sourcePattern };
