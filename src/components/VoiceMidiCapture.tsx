@@ -54,6 +54,10 @@ function phaseMessage(phase: RhythmCapturePhase) {
   return "ANALYZING PITCH + NOTE TIMING…";
 }
 
+function throwIfAborted(signal: AbortSignal) {
+  if (signal.aborted) throw new DOMException("Voice capture cancelled", "AbortError");
+}
+
 export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
   const [state, setState] = useState<CaptureState>("idle");
   const [message, setMessage] = useState("READY — ONE-BAR VOICE CAPTURE");
@@ -89,11 +93,12 @@ export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
         signal: controller.signal,
         onPhase: handlePhase,
       });
-      if (controller.signal.aborted) return;
+      throwIfAborted(controller.signal);
 
       setState("processing");
       setMessage("DECODING VOICE CAPTURE…");
       const decoded = await decodeCapture(recording);
+      throwIfAborted(controller.signal);
       const mono = monoSamples(decoded);
       const level = signalLevel(mono);
 
@@ -107,6 +112,7 @@ export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
         bpm: captureBpm,
         quantizeStepBeats: 0.25,
       });
+      throwIfAborted(controller.signal);
 
       if (!detected.length) {
         throw new Error('NO STABLE PITCH — HUM OR SING "AH", ONE NOTE AT A TIME');
