@@ -1,4 +1,5 @@
-import { ArrowRight, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { assetKindLabel, type ProjectAudioAsset } from "../project/assets";
 import "../assetBin.css";
 
@@ -22,42 +23,57 @@ function canSplit(asset: ProjectAudioAsset) {
 }
 
 export function AssetBin({ assets, onRemove, onClear, onSend }: AssetBinProps) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
   return (
-    <section className="assetBin module" aria-label="Project asset bin">
+    <aside className={`assetBin module ${mobileOpen ? "mobileOpen" : ""}`} aria-label="Crate">
       <div className="assetBinHeader">
         <div>
-          <div className="moduleTitle">PROJECT BIN // CURRENT MATERIAL</div>
-          <div className="assetBinHint">UPLOAD ONCE. SPLIT / RESAMPLE / TRANSLATE DERIVATIVES STAY AVAILABLE WHILE THIS SESSION IS OPEN.</div>
+          <div className="moduleTitle">CRATE</div>
+          <div className="assetBinHint">Your sounds stay here while you switch tools.</div>
         </div>
-        {assets.length > 0 && (
-          <button className="utilityButton" onClick={onClear}>CLEAR BIN</button>
-        )}
+        <div className="assetBinHeaderActions">
+          <button
+            className="crateToggle utilityButton"
+            type="button"
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen((open) => !open)}
+          >
+            {mobileOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            {assets.length} {assets.length === 1 ? "SOUND" : "SOUNDS"}
+          </button>
+          {assets.length > 0 && (
+            <button className="utilityButton clearCrate" type="button" onClick={onClear}>CLEAR</button>
+          )}
+        </div>
       </div>
 
-      {!assets.length ? (
-        <div className="assetBinEmpty">NO MATERIAL YET — ADD A SOURCE IN ANY WORKSPACE</div>
-      ) : (
-        <div className="assetBinRail">
-          {assets.map((asset) => (
-            <div className="assetCard" key={asset.id}>
-              <div className="assetCardTop">
-                <span className="assetKind">{assetKindLabel(asset.kind)}</span>
-                <span className="assetOrigin">{asset.origin.toUpperCase()}</span>
+      <div className="assetBinBody">
+        {!assets.length ? (
+          <div className="assetBinEmpty">Drop or split audio to start your crate.</div>
+        ) : (
+          <div className="assetBinRail">
+            {assets.map((asset) => (
+              <div className="assetCard" key={asset.id}>
+                <div className="assetCardTop">
+                  <span className="assetKind">{assetKindLabel(asset.kind)}</span>
+                  <span className="assetOrigin">{asset.origin.toUpperCase()}</span>
+                </div>
+                <b title={asset.file.name}>{asset.label || asset.file.name}</b>
+                <span className="assetMeta">{formatBytes(asset.file.size)} · {asset.parentId ? "DERIVED" : "SOURCE"}</span>
+                <div className="assetSendRow">
+                  <button type="button" onClick={() => onSend(asset, "resample")}><ArrowRight size={10} /> SAMPLE</button>
+                  <button type="button" onClick={() => onSend(asset, "translate")}><ArrowRight size={10} /> TRANSFORM</button>
+                  {canSplit(asset) && <button type="button" onClick={() => onSend(asset, "split")}><ArrowRight size={10} /> SPLIT</button>}
+                </div>
+                <button className="assetRemove" type="button" aria-label={`Remove ${asset.label}`} onClick={() => onRemove(asset.id)}>
+                  <Trash2 size={12} /> REMOVE
+                </button>
               </div>
-              <b title={asset.file.name}>{asset.label || asset.file.name}</b>
-              <span className="assetMeta">{formatBytes(asset.file.size)} // {asset.parentId ? "DERIVED" : "SOURCE"}</span>
-              <div className="assetSendRow">
-                <button onClick={() => onSend(asset, "resample")}><ArrowRight size={10} /> RESAMPLE</button>
-                <button onClick={() => onSend(asset, "translate")}><ArrowRight size={10} /> TRANSLATE</button>
-                {canSplit(asset) && <button onClick={() => onSend(asset, "split")}><ArrowRight size={10} /> SPLIT</button>}
-              </div>
-              <button className="assetRemove" aria-label={`Remove ${asset.label}`} onClick={() => onRemove(asset.id)}>
-                <Trash2 size={12} /> REMOVE
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
+            ))}
+          </div>
+        )}
+      </div>
+    </aside>
   );
 }
