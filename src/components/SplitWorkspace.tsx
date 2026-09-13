@@ -6,8 +6,19 @@ import {
   stemUrlToFile,
   type SplitStem,
 } from "../separation/client";
+import {
+  assetKindLabel,
+  type AudioAssetKind,
+  type NewProjectAudioAsset,
+  type ProjectAudioAsset,
+} from "../project/assets";
 
 type SplitMode = "full" | "drums";
+
+type SplitWorkspaceProps = {
+  assets: ProjectAudioAsset[];
+  onAddAsset: (input: NewProjectAudioAsset) => ProjectAudioAsset;
+};
 
 function downloadUrl(url: string, fileName: string) {
   const anchor = document.createElement("a");
@@ -18,9 +29,15 @@ function downloadUrl(url: string, fileName: string) {
   anchor.click();
 }
 
-export function SplitWorkspace() {
+function sourceKind(mode: SplitMode): AudioAssetKind {
+  return mode === "full" ? "mix" : "drums";
+}
+
+export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   const [mode, setMode] = useState<SplitMode>("full");
   const [file, setFile] = useState<File | null>(null);
+  const [sourceAssetId, setSourceAssetId] = useState<string | null>(null);
+  const [drumsAssetId, setDrumsAssetId] = useState<string | null>(null);
   const [stems, setStems] = useState<SplitStem[]>([]);
   const [drumSubstems, setDrumSubstems] = useState<SplitStem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -41,24 +58,61 @@ export function SplitWorkspace() {
     stopAudio();
     setMode(next);
     setFile(null);
+    setSourceAssetId(null);
+    setDrumsAssetId(null);
     setStems([]);
     setDrumSubstems([]);
-    setMessage(next === "full" ? "DROP A FULL MIX" : "DROP AN ISOLATED DRUM STEM");
+    setMessage(next === "full" ? "DROP A FULL MIX OR CHOOSE ONE FROM THE BIN" : "DROP DRUM AUDIO OR CHOOSE IT FROM THE BIN");
   }
 
-  async function runSplit(nextFile = file) {
+  function registerSource(nextFile: File, existing?: ProjectAudioAsset) {
+    if (existing) return existing;
+    return onAddAsset({
+      file: nextFile,
+      kind: sourceKind(mode),
+      label: nextFile.name,
+      origin: "upload",
+    });
+  }
+
+  async function publishStems(resultStems: SplitStem[], parentId: string) {
+    const files = await Promise.all(resultStems.map(async (stem) => ({
+      stem,
+      file: await stemUrlToFile(stem),
+    })));
+
+    return files.map(({ stem, file: stemFile }) => onAddAsset({
+      file: stemFile,
+      kind: stem.kind,
+      label: stem.label,
+      origin: "split",
+      parentId,
+    }));
+  }
+
+  async function runSplit(nextFile = file, existingAsset?: ProjectAudioAsset) {
     if (!nextFile) return;
     stopAudio();
     setBusy(true);
+    setFile(nextFile);
     setStems([]);
     setDrumSubstems([]);
-    setMessage(mode === "full" ? "SEPARATING FULL MIX…" : "SPLITTING DRUM STEM…");
+    setDrumsAssetId(null);
+    setMessage(mode === "full" ? "SEPARATING FULL MIX…" : "SPLITTING DRUM AUDIO…");
+
+    const sourceAsset = registerSource(nextFile, existingAsset);
+    setSourceAssetId(sourceAsset.id);
 
     try {
       const result = mode === "full" ? await splitFullMix(nextFile) : await splitDrumStem(nextFile);
       if (mode === "full") setStems(result.stems);
       else setDrumSubstems(result.stems);
-      setMessage(`SPLIT READY — ${result.stems.length} STEMS`);
+
+      const published = await publishStems(result.stems, sourceAsset.id);
+      const publishedDrums = published.find((asset) => asset.kind === "drums");
+      if (publishedDrums) setDrumsAssetId(publishedDrums.id);
+
+      setMessage(`SPLIT READY — ${result.stems.length} STEMS ADDED TO PROJECT BIN`);
     } catch (error) {
       console.error(error);
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "SPLIT FAILED"}`);
@@ -76,7 +130,9 @@ export function SplitWorkspace() {
       const drumFile = await stemUrlToFile(drumsStem);
       const result = await splitDrumStem(drumFile);
       setDrumSubstems(result.stems);
-      setMessage(`DRUM SUBSTEMS READY — ${result.stems.length} STEMS`);
+      const parentId = drumsAssetId ?? sourceAssetId;
+      if (parentId) await publishStems(result.stems, parentId);
+      setMessage(`DRUM SUBSTEMS READY — ${result.stems.length} STEMS ADDED TO PROJECT BIN`);
     } catch (error) {
       console.error(error);
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "DRUM SPLIT FAILED"}`);
@@ -133,17 +189,36 @@ export function SplitWorkspace() {
       <section className="module">
         <div className="moduleTitle">SPLIT // SOURCE SEPARATION</div>
         <div className="resampleIntro">
-          Separate a full mix into broad stems, or split an already-isolated drum stem into real drum sub-stems before pattern detection. Preview uses the separated audio itself so timbre is preserved.
+          Drop a full song for DRUMS / BASS / VOCALS / OTHER, or feed drum audio directly into the drum splitter. Every source and result is copied into the PROJECT BIN so it can be reused elsewhere without uploading again.
         </div>
 
         <div className="splitModeTabs">
-          <button className={mode === "full" ? "active" : ""} onClick={() => chooseMode("full")}>FULL MIX</button>
-          <button className={mode === "drums" ? "active" : ""} onClick={() => chooseMode("drums")}>DRUM STEM</button>
+          <button className={mode === "full" ? "active" : ""} onClick={() => chooseMode("full")}>FULL SONG / MIX</button>
+          <button className={mode === "drums" ? "active" : ""} onClick={() => chooseMode("drums")}>DRUM AUDIO</button>
         </div>
+
+        {assets.length > 0 && (
+          <div className="splitBinSource">
+            <span>USE MATERIAL FROM PROJECT BIN</span>
+            <div className="splitBinChoices">
+              {assets.map((asset) => (
+                <button
+                  key={asset.id}
+                  className={sourceAssetId === asset.id ? "utilityButton active" : "utilityButton"}
+                  disabled={busy || splittingDrums}
+                  title={asset.file.name}
+                  onClick={() => void runSplit(asset.file, asset)}
+                >
+                  {assetKindLabel(asset.kind)} // {asset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <label className="splitDrop">
           <Upload size={22} />
-          <b>{file?.name ?? (mode === "full" ? "DROP / CHOOSE FULL MIX" : "DROP / CHOOSE DRUM STEM")}</b>
+          <b>{file?.name ?? (mode === "full" ? "DROP / CHOOSE FULL SONG" : "DROP / CHOOSE DRUM AUDIO")}</b>
           <span>{mode === "full" ? "DRUMS / BASS / VOCALS / OTHER" : "KICK / SNARE / HI-HAT / CYMBALS / TOMS"}</span>
           <input
             type="file"
@@ -153,7 +228,6 @@ export function SplitWorkspace() {
             onChange={(event) => {
               const next = event.target.files?.[0];
               if (!next) return;
-              setFile(next);
               void runSplit(next);
               event.currentTarget.value = "";
             }}
@@ -176,7 +250,7 @@ export function SplitWorkspace() {
         <section className="module splitDrumAction">
           <div className="moduleTitle">02 // DRUM SUB-SPLIT</div>
           <div className="splitActionRow">
-            <div className="midiWarning">Use the separated DRUMS audio as the source for instrument-specific splitting. This avoids guessing kick/snare/hat identity from one composite waveform.</div>
+            <div className="midiWarning">This uses the separated DRUMS stem as a new child asset, then splits it into instrument-specific material. The original song and broad stems remain untouched in the bin.</div>
             <button className="processButton" disabled={splittingDrums || busy} onClick={() => void splitDetectedDrums()}>
               <Scissors size={15} /> {splittingDrums ? "SPLITTING…" : "SPLIT DRUMS FURTHER"}
             </button>
@@ -185,13 +259,6 @@ export function SplitWorkspace() {
       )}
 
       {renderStemRack(stems.length ? "03 // DRUM SUBSTEMS" : "01 // DRUM SUBSTEMS", drumSubstems)}
-
-      {(stems.length || drumSubstems.length) ? (
-        <section className="module">
-          <div className="moduleTitle">PREVIEW RULE</div>
-          <div className="midiWarning">These previews play the separated WAV stems directly. No generic MIDI kit or reconstructed placeholder is used here. Pattern detection should run after separation, per stem, so the kick row comes from kick audio, the snare row from snare audio, and so on.</div>
-        </section>
-      ) : null}
     </section>
   );
 }
