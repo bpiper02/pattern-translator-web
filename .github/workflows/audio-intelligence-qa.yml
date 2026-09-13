@@ -50,9 +50,15 @@ jobs:
         continue-on-error: true
         run: node qa/essentia-pyin-spike.cjs
 
-      # Basic Pitch remains archived in qa/basic-pitch*.cjs. Its strict bakeoff
-      # scored 0.762 macro F1 with a complete vibrato miss, so we no longer pay
-      # the TensorFlow install/inference cost on every spike push.
+      - name: Corrected melody bakeoff v2
+        if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        continue-on-error: true
+        run: node qa/melody-bakeoff-v2.cjs
+
+      # Basic Pitch scripts remain archived for reproducibility. The earlier
+      # vibrato verdict is no longer considered valid because the v1 synthetic
+      # fixture modulated frequency without integrating phase. Re-run Basic
+      # Pitch only if the corrected Essentia bakeoff does not produce a winner.
 
       - name: Build
         run: npm run build
