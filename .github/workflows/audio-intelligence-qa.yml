@@ -51,6 +51,14 @@ jobs:
       - name: Melody MIDI regression
         run: node qa/melody-midi-regression.mjs
 
+      - name: Compile operation gate regression target
+        if: github.ref_name == 'feat/chopsticks-integration-qa'
+        run: npx tsc src/state/operationGate.ts --outDir .qa-state-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+
+      - name: Operation gate regression
+        if: github.ref_name == 'feat/chopsticks-integration-qa'
+        run: node qa/operation-gate.mjs
+
       - name: Compile beat-grid core for regression
         if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx tsc src/analysis/drumGrid.ts --outDir .qa-beat-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
