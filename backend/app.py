@@ -10,7 +10,13 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from separation_profiles import drum_profile, full_mix_profile
+from backend.separation_profiles import (
+    classify_broad,
+    classify_drum,
+    classify_pair,
+    drum_profile,
+    full_mix_profile,
+)
 
 APP_ROOT = Path(__file__).resolve().parent
 DATA_ROOT = APP_ROOT / "data" / "jobs"
@@ -38,40 +44,6 @@ def safe_suffix(filename: str | None) -> str:
 
 def public_url(job_id: str, path: Path) -> str:
     return f"http://127.0.0.1:8788/files/{job_id}/{path.name}"
-
-
-def classify_broad(path: Path) -> str | None:
-    name = path.stem.lower()
-    for kind in ("drums", "bass", "vocals", "other"):
-        if kind in name:
-            return kind
-    return None
-
-
-def classify_pair(path: Path) -> str | None:
-    name = path.stem.lower()
-    if "instrumental" in name or "no_vocals" in name or "no vocals" in name:
-        return "instrumental"
-    if "vocals" in name or "vocal" in name:
-        return "vocals"
-    return None
-
-
-def classify_drum(path: Path) -> str | None:
-    name = path.stem.lower().replace("-", "_")
-    aliases = {
-        "kick": ("kick", "bd"),
-        "snare": ("snare", "sd"),
-        "hihat": ("hihat", "hi_hat", "hh"),
-        "ride": ("ride",),
-        "crash": ("crash",),
-        "cymbals": ("cymbal", "cymbals"),
-        "toms": ("tom", "toms"),
-    }
-    for kind, tokens in aliases.items():
-        if any(token in name for token in tokens):
-            return kind
-    return None
 
 
 def response_for(job_id: str, files: list[tuple[str, Path]], *, profile: str, engine: str) -> dict:
@@ -238,14 +210,11 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
             found["vocals"] = pair["vocals"]
             engine = f"{selected.vocal_model} -> {selected.broad_model}"
         else:
-            broad = collect_broad(run_audio_separator(input_path, job_dir / "broad", selected.broad_model))
-            found = broad
+            found = collect_broad(run_audio_separator(input_path, job_dir / "broad", selected.broad_model))
             engine = selected.broad_model
     except RuntimeError as exc:
         if profile != "hq":
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        # HQ is intentionally optional: if a large checkpoint or runtime is not
-        # available, preserve a usable local workflow with the proven Demucs path.
         fallback = full_mix_profile("balanced")
         try:
             found = collect_broad(run_audio_separator(input_path, job_dir / "broad_fallback", fallback.broad_model))
