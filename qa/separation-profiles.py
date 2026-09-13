@@ -1,4 +1,5 @@
 from pathlib import Path
+import runpy
 
 from backend.separation_profiles import (
     classify_broad,
@@ -60,3 +61,7 @@ for name, expected in drum_cases.items():
     check(classify_drum(Path(name)), expected, name)
 
 print("SEPARATION PROFILE REGRESSION: PASS")
+
+# Keep backend policy checks in the same dependency-free CI step so storage
+# lifecycle regressions fail before heavyweight separator dependencies matter.
+runpy.run_path(Path(__file__).with_name("job-storage.py"), run_name="__main__")
