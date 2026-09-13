@@ -1,8 +1,7 @@
 import Essentia from "essentia.js/dist/essentia.js-core.es.js";
 import { EssentiaWASM } from "essentia.js/dist/essentia-wasm.es.js";
-import type { DrumHit } from "../audio";
 import { extractDrumTimbreFeatures } from "./drumTimbre";
-import { recoverLayeredDrumHits, type LayerBandOnsets } from "./layeredDrumsCore";
+import { recoverLayeredDrumHits, type LayerBandOnsets, type LayeredDrumHit } from "./layeredDrumsCore";
 
 const ANALYSIS_SR = 44100;
 let essentiaInstance: any | null = null;
@@ -114,7 +113,7 @@ function filteredSuperFlux(essentia: any, signal: any, band: "low" | "mid" | "hi
   }
 }
 
-export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm: number): DrumHit[] {
+export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm: number): LayeredDrumHit[] {
   if (!samples.length || !Number.isFinite(sampleRate) || sampleRate <= 0) return [];
 
   const essentia = getEssentia();
@@ -124,9 +123,6 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
   const signal = essentia.arrayToVector(analysis);
 
   try {
-    // Full-band onset detection establishes candidate event times. Multiband
-    // detectors below decide whether one of those events contains multiple drum
-    // families; they do not independently create unrelated off-grid events.
     let onsetTimes = runSuperFlux(essentia, signal, 16, 0.05);
     if (!onsetTimes.length) onsetTimes = runSuperFlux(essentia, signal, 8, 0.02);
     if (!onsetTimes.length) return [];
@@ -140,9 +136,6 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
     const scoreFloor = Math.max(0.0015, scoreMedian * 0.45);
     const gated = candidates.filter((x) => x.score >= scoreFloor && x.peak >= 0.01);
 
-    // De-dupe nearby full-band peak-picker observations into one event time. This
-    // no longer destroys simultaneous drums: multiband evidence can expand that
-    // single musical event back into several lanes after timbre analysis.
     const deduped: typeof gated = [];
     const minGap = 0.055;
     for (const item of gated) {
