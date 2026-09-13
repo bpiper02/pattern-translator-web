@@ -2,6 +2,11 @@
 .splitModeTabs{display:flex;gap:6px;margin:8px 0}
 .splitModeTabs button{border:1px solid #26323b;border-top-color:#d4dde3;border-left-color:#d4dde3;background:linear-gradient(#8ea0af,#667786);color:#17202a;box-shadow:inset 1px 1px #bfcbd3,inset -1px -1px #40505d;padding:8px 14px;font:900 10px "Courier New",monospace;letter-spacing:.06em}
 .splitModeTabs button.active{background:linear-gradient(#ffc23a,#d78f00);color:#2b210a;box-shadow:inset 1px 1px #ffe29a,inset -1px -1px #7f5300}
+.splitBinSource{margin:8px 0;padding:8px;background:#566773;border:2px inset #aab8c2;font-family:"Courier New",monospace}
+.splitBinSource>span{display:block;font-size:9px;font-weight:900;letter-spacing:.08em;color:#dce5ea;margin-bottom:6px}
+.splitBinChoices{display:flex;gap:6px;overflow-x:auto;padding-bottom:3px;scrollbar-width:thin}
+.splitBinChoices .utilityButton{flex:0 0 auto;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.splitBinChoices .utilityButton.active{outline:2px solid #ffb000;outline-offset:1px}
 .splitDrop{min-height:120px;background:#4d5c68;border:2px inset #aab8c2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#e9eff2;font-family:"Courier New",monospace;cursor:pointer;margin:8px 0}
 .splitDrop b{font-size:12px}
 .splitDrop span{font-size:9px;color:#c8d2d9}
