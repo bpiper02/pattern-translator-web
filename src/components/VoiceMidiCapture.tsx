@@ -5,6 +5,7 @@ import { detectVoiceMelody, type VoiceMelodyNote } from "../analysis/voiceMelody
 import { recordOneBarRhythm as recordOneBarVoice, type RhythmCapturePhase } from "../audio/captureRhythm";
 import { melodyMidi } from "../midi";
 import { DraftNumberInput } from "./DraftNumberInput";
+import "../voiceMidi.css";
 
 type VoiceMidiCaptureProps = {
   bpm: number;
@@ -90,10 +91,6 @@ export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
     if (context && context.state !== "closed") void context.close();
     setPreviewing(false);
   }
-
-  useEffect(() => {
-    if (!active && !notes.length) setCaptureTempo(validTempo(bpm));
-  }, [bpm, active, notes.length]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -237,7 +234,7 @@ export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
     <section className="module patternModule">
       <div className="moduleTitle">01B // VOICE → MIDI</div>
       <div className="midiWarning">ONE BAR • HUM / SING “AH” • ONE NOTE AT A TIME • NO CHORDS OR BACKING TRACK</div>
-      <div className="voiceCapture">
+      <div className="voiceMidiSetup">
         <label className="miniControl"><span>CAPTURE BPM</span><DraftNumberInput value={captureTempo} min={40} max={240} step={1} onCommit={setCaptureTempo} ariaLabel="Voice capture BPM" /></label>
         <div className="voiceNote">SET THE TEMPO FIRST. YOU GET A 4-BEAT COUNT-IN, THEN EXACTLY ONE BAR TO HUM OR SING THE MELODY.</div>
       </div>
