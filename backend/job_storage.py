@@ -15,13 +15,13 @@ def prune_job_directories(
     """Remove expired jobs, then cap the remaining store by oldest mtime.
 
     The splitter job directory is temporary cache material, not durable project
-    storage. Cleanup is best-effort: a directory disappearing between stat and
-    delete should not break a user request.
+    storage. `max_jobs=0` is valid when a caller wants to reserve all capacity
+    for a job it is about to create.
     """
     if ttl_seconds < 0:
         raise ValueError("ttl_seconds must be non-negative")
-    if max_jobs < 1:
-        raise ValueError("max_jobs must be at least 1")
+    if max_jobs < 0:
+        raise ValueError("max_jobs must be non-negative")
 
     root.mkdir(parents=True, exist_ok=True)
     current_time = time.time() if now is None else now
