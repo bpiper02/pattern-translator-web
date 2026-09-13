@@ -1,0 +1,69 @@
+html,body,#root{max-width:100%;overflow-x:hidden}
+.machineShell>*{min-width:0}
+
+.assetCard b,.splitStemReadout b,.splitStemReadout span,.autoKitReadout b,.fileReadout b,.stemName span{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.assetCard b,.splitStemReadout span,.autoKitReadout b,.stemName span{white-space:nowrap}
+.splitEngineReadout,.lcdStatus,.resampleStatus,.voiceNote,.midiWarning{overflow-wrap:anywhere}
+
+.assetSendRow button,.assetRemove,.workspaceTabs button,.modeButtons button,.splitModeTabs button,.uiDock button{touch-action:manipulation}
+.stepCell{touch-action:manipulation}
+
+:root[data-cs-skin="acid"] .workspaceTabs button.active,
+:root[data-cs-skin="acid"] .modeButtons button.active,
+:root[data-cs-skin="acid"] .splitModeTabs button.active,
+:root[data-cs-skin="acid"] .processButton,
+:root[data-cs-skin="acid"] .primaryExport,
+:root[data-cs-skin="amber"] .workspaceTabs button.active,
+:root[data-cs-skin="amber"] .modeButtons button.active,
+:root[data-cs-skin="amber"] .splitModeTabs button.active,
+:root[data-cs-skin="amber"] .processButton,
+:root[data-cs-skin="amber"] .primaryExport{color:#0c0b09!important;text-shadow:none!important}
+
+.uiDockPanel:focus-within{border-color:color-mix(in srgb,var(--cs-accent) 70%,#555 30%)}
+.assetCard:focus-within,.sampleSlot:focus-within,.splitStemCard:focus-within{border-color:color-mix(in srgb,var(--cs-accent) 65%,#555 35%)!important}
+
+@media(max-width:820px){
+  body{padding-bottom:calc(58px + env(safe-area-inset-bottom,0px))}
+  .machineShell{border-radius:7px}
+  .workspaceTabs button{min-height:42px}
+  .crateToggle,.clearCrate{min-height:38px!important}
+  .assetSendRow button,.assetRemove{min-height:38px}
+  .modeButtons button,.utilityButton,.processButton,.exportButton,.abPlayButton,.stemToggle,.stemUploadButton,.recordButton,.laneAudition{min-height:42px!important}
+  input,select{min-height:42px}
+  .uiDock{right:max(8px,env(safe-area-inset-right,0px));bottom:max(8px,env(safe-area-inset-bottom,0px))}
+  .uiDockButtons>button{width:42px;height:42px}
+  .uiDockPanel{max-height:calc(70vh - env(safe-area-inset-bottom,0px))}
+  .resultPanel{gap:8px!important}
+  .abDeck{gap:6px!important}
+}
+
+@media(max-width:520px){
+  .machineShell{width:calc(100% - 8px);margin:4px auto 14px;padding:5px}
+  .module{padding:10px!important}
+  .workspaceTabs{overflow-x:auto;scrollbar-width:none}
+  .workspaceTabs::-webkit-scrollbar{display:none}
+  .workspaceTabs button{flex:1 0 78px}
+  .assetBinHeaderActions{gap:4px}
+  .assetBinHeader .moduleTitle{font-size:12px!important}
+  .assetSendRow{grid-template-columns:1fr!important}
+  .assetSendRow button{justify-content:flex-start!important;padding-inline:8px!important}
+  .translateGrid{gap:6px!important}
+  .digitalControl input,.keyControl select{font-size:19px!important}
+  .abDeck{grid-template-columns:1fr!important}
+  .abChannel,.fileReadout,.abDeck>.utilityButton{grid-column:1!important;min-width:0!important}
+  .resultPanel{padding:9px!important}
+  .uiDockPanel{width:calc(100vw - 16px)}
+  .skinChoices{grid-template-columns:1fr}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .sampleSlot,.stepCell,.workspaceTabs button,.uiDock button{transition:none!important}
+  .sampleSlot:hover,.stepCell:hover{transform:none!important}
+  .progressBlocks{animation:none!important;transform:none!important;width:58%!important}
+}
+
+@media(prefers-contrast:more){
+  .module,.assetCard,.sampleSlot,.splitStemCard,.stepGrid,.uiDockPanel{border-color:#666!important}
+  .workspaceTabs button,.utilityButton,.processButton,.exportButton,.abPlayButton{border-width:2px!important}
+  .moduleTitle,.assetCard b,.sampleSlot b{color:#fff!important}
+}
