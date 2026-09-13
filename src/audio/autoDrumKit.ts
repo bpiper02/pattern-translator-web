@@ -3,6 +3,7 @@ import { detectDrumOnsets } from "../analysis/drumOnsets";
 import { analyzeRhythm } from "../analysis/rhythm";
 import { alignHitsToBeatGrid, beatToStep } from "../analysis/drumGrid";
 import { nextDistinctEventTime } from "./drumSlice";
+import { selectRepresentativeDrumHit } from "./drumRepresentative";
 
 export type AutoKitLane = "KICK" | "SNARE" | "HAT" | "PERC";
 
@@ -44,9 +45,6 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
   const samples = monoSamples(source);
   const detectedHits = detectDrumOnsets(samples, source.sampleRate, bpm);
 
-  // Onset detection answers "when did a transient occur?". Beat tracking answers
-  // "where is that time musically?". Keep those concerns separate so a missing
-  // first transient cannot redefine beat zero for the entire visual pattern.
   let hits = detectedHits;
   try {
     const rhythm = analyzeRhythm(samples, source.sampleRate);
@@ -82,13 +80,14 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
     counts[lane] = candidates.length;
     if (!candidates.length) continue;
 
-    const ordered = [...candidates].sort((a, b) => b.velocity - a.velocity);
-    const selected = ordered[0];
+    // Pick the source-local timbre medoid with the cleanest surrounding space,
+    // rather than blindly choosing the loudest accent/layered transient.
+    const selected = selectRepresentativeDrumHit(candidates, hits);
+    if (!selected) continue;
+
     const preRoll = 0.004;
     const maxTail = laneTailSeconds(lane);
     const start = Math.max(0, selected.time - preRoll);
-    // Layered hits can share one timestamp (kick+hat, snare+hat). Only a truly
-    // later musical event may cap the representative sample's natural tail.
     const nextTime = nextDistinctEventTime(hits, selected.time);
     const nextBoundary = nextTime != null
       ? Math.max(start + 0.025, nextTime - preRoll)
