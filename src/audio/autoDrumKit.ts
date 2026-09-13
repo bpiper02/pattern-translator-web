@@ -1,5 +1,7 @@
 import { monoSamples } from "../audio";
 import { detectDrumOnsets } from "../analysis/drumOnsets";
+import { analyzeRhythm } from "../analysis/rhythm";
+import { alignHitsToBeatGrid, beatToStep } from "../analysis/drumGrid";
 
 export type AutoKitLane = "KICK" | "SNARE" | "HAT" | "PERC";
 
@@ -39,7 +41,19 @@ function laneTailSeconds(lane: AutoKitLane) {
 
 export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResult {
   const samples = monoSamples(source);
-  const hits = detectDrumOnsets(samples, source.sampleRate, bpm);
+  const detectedHits = detectDrumOnsets(samples, source.sampleRate, bpm);
+
+  // Onset detection answers "when did a transient occur?". Beat tracking answers
+  // "where is that time musically?". Keep those concerns separate so a missing
+  // first transient cannot redefine beat zero for the entire visual pattern.
+  let hits = detectedHits;
+  try {
+    const rhythm = analyzeRhythm(samples, source.sampleRate);
+    hits = alignHitsToBeatGrid(detectedHits, rhythm.beats, rhythm.bpm || bpm);
+  } catch (error) {
+    console.warn("Beat-grid alignment unavailable; using absolute-time fallback", error);
+    hits = alignHitsToBeatGrid(detectedHits, [], bpm);
+  }
 
   const grouped = new Map<AutoKitLane, typeof hits>();
   for (const lane of LANE_BY_ANALYSIS_INDEX) grouped.set(lane, []);
@@ -55,10 +69,8 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
     const lane = LANE_BY_ANALYSIS_INDEX[Math.max(0, Math.min(LANE_BY_ANALYSIS_INDEX.length - 1, hit.lane))];
     grouped.get(lane)!.push(hit);
 
-    if (hit.beat >= 0 && hit.beat < 4) {
-      const step = Math.max(0, Math.min(STEPS - 1, Math.round(hit.beat * 4)));
-      sourcePattern[lane][step] = true;
-    }
+    const step = beatToStep(hit.beat);
+    if (step >= 0 && step < STEPS) sourcePattern[lane][step] = true;
   }
 
   const lanes: Partial<Record<AutoKitLane, AudioBuffer>> = {};
