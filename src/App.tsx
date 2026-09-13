@@ -9,6 +9,13 @@ import { StemEditor } from "./components/StemEditor";
 import { ResampleWorkspace } from "./components/ResampleWorkspace";
 import { SplitWorkspace } from "./components/SplitWorkspace";
 import { DraftNumberInput } from "./components/DraftNumberInput";
+import { AssetBin } from "./components/AssetBin";
+import {
+  addProjectAsset,
+  removeProjectAsset,
+  type NewProjectAudioAsset,
+  type ProjectAudioAsset,
+} from "./project/assets";
 
 type Workspace = "translate" | "split" | "edit" | "resample";
 type Mode = "beat" | "drums" | "bass" | "melody";
@@ -99,14 +106,34 @@ export function App() {
   const [playingTranslated, setPlayingTranslated] = useState(false);
   const [ratio, setRatio] = useState(0);
   const [message, setMessage] = useState("READY — DROP A BEAT OR STEM");
+  const [assets, setAssets] = useState<ProjectAudioAsset[]>([]);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const translatedPlaybackRef = useRef<DrumPlayback | null>(null);
+  const assetsRef = useRef<ProjectAudioAsset[]>([]);
 
   const tonalMode = mode !== "drums";
   const pitchShift = tonalMode ? semitoneDistance(sourceRoot, targetRoot) : drumPitchShift;
+
+  function addAsset(input: NewProjectAudioAsset) {
+    const result = addProjectAsset(assetsRef.current, input);
+    assetsRef.current = result.assets;
+    setAssets(result.assets);
+    return result.asset;
+  }
+
+  function removeAsset(id: string) {
+    const next = removeProjectAsset(assetsRef.current, id);
+    assetsRef.current = next;
+    setAssets(next);
+  }
+
+  function clearAssets() {
+    assetsRef.current = [];
+    setAssets([]);
+  }
 
   function stopPlayback() {
     if (audioRef.current) {
@@ -269,7 +296,7 @@ export function App() {
       <header className="machineHeader">
         <div>
           <div className="brandLine"><span>PT</span> PATTERN TRANSLATOR</div>
-          <div className="versionLine">DIRECT AUDIO WORKSTATION // BUILD 0.8</div>
+          <div className="versionLine">DIRECT AUDIO WORKSTATION // BUILD 0.9</div>
         </div>
         <div className="statusTag">LOCAL DSP</div>
       </header>
@@ -281,8 +308,10 @@ export function App() {
         <button className={workspace === "resample" ? "active" : ""} onClick={() => switchWorkspace("resample")}>RESAMPLE</button>
       </nav>
 
+      <AssetBin assets={assets} onRemove={removeAsset} onClear={clearAssets} />
+
       {workspace === "split" ? (
-        <SplitWorkspace />
+        <SplitWorkspace assets={assets} onAddAsset={addAsset} />
       ) : workspace === "edit" ? (
         <StemEditor />
       ) : workspace === "resample" ? (
