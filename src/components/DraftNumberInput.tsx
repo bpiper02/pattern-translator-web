@@ -7,9 +7,10 @@ type DraftNumberInputProps = {
   step?: number;
   onCommit: (value: number) => void;
   ariaLabel?: string;
+  disabled?: boolean;
 };
 
-export function DraftNumberInput({ value, min, max, step = 1, onCommit, ariaLabel }: DraftNumberInputProps) {
+export function DraftNumberInput({ value, min, max, step = 1, onCommit, ariaLabel, disabled = false }: DraftNumberInputProps) {
   const [draft, setDraft] = useState(String(value));
   const [focused, setFocused] = useState(false);
 
@@ -19,6 +20,10 @@ export function DraftNumberInput({ value, min, max, step = 1, onCommit, ariaLabe
 
   function commit() {
     setFocused(false);
+    if (disabled) {
+      setDraft(String(value));
+      return;
+    }
     const parsed = Number(draft);
     if (!draft.trim() || !Number.isFinite(parsed)) {
       setDraft(String(value));
@@ -47,6 +52,7 @@ export function DraftNumberInput({ value, min, max, step = 1, onCommit, ariaLabe
       step={step}
       value={draft}
       aria-label={ariaLabel}
+      disabled={disabled}
       onFocus={(event) => {
         setFocused(true);
         event.currentTarget.select();
