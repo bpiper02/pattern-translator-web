@@ -37,6 +37,7 @@ function sourceKind(mode: SplitMode): AudioAssetKind {
 
 function shortEngine(engine: string) {
   if (engine.includes("MDX23C-DrumSep")) return "MDX23C DRUMSEP";
+  if (engine.includes("ensemble:vocal_balanced") && engine.includes("htdemucs")) return "VOCAL BALANCED ENSEMBLE → HTDEMUCS";
   if (engine.includes("melband_roformer") && engine.includes("htdemucs")) return "MEL-ROFORMER → HTDEMUCS";
   if (engine.includes("htdemucs_ft")) return engine.startsWith("fallback:") ? "HTDEMUCS FT FALLBACK" : "HTDEMUCS FT";
   if (engine.includes("drumsep")) return engine.startsWith("fallback:") ? "RULE-BASED DRUMSEP FALLBACK" : "RULE-BASED DRUMSEP";
