@@ -15,6 +15,7 @@ import { createOperationGate } from "./state/operationGate";
 import {
   addProjectAsset,
   removeProjectAsset,
+  type AudioAssetKind,
   type NewProjectAudioAsset,
   type ProjectAudioAsset,
 } from "./project/assets";
@@ -47,6 +48,19 @@ function translateModeForAsset(asset: ProjectAudioAsset): Mode {
   if (["drums", "kick", "snare", "hihat", "cymbals", "toms"].includes(asset.kind)) return "drums";
   if (asset.kind === "bass") return "bass";
   return "melody";
+}
+
+function assetKindForTranslateMode(mode: Mode): AudioAssetKind {
+  if (mode === "beat") return "mix";
+  if (mode === "drums") return "drums";
+  if (mode === "bass") return "bass";
+  return "melody";
+}
+
+function translatedName(sourceName: string, bpm: number, semitones: number) {
+  const base = sourceName.replace(/\.[^.]+$/, "") || "audio";
+  const pitch = semitones === 0 ? "0st" : `${semitones > 0 ? "+" : ""}${semitones}st`;
+  return `${base}-translated-${Math.round(bpm * 10) / 10}bpm-${pitch}.wav`;
 }
 
 function VintageProgress({ label }: { label: string }) {
@@ -118,6 +132,7 @@ export function App() {
   const [message, setMessage] = useState("READY — DROP A BEAT OR STEM");
   const [assets, setAssets] = useState<ProjectAudioAsset[]>([]);
   const [routedResampleAsset, setRoutedResampleAsset] = useState<ProjectAudioAsset | null>(null);
+  const [currentSourceAssetId, setCurrentSourceAssetId] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -128,6 +143,13 @@ export function App() {
 
   const tonalMode = mode !== "drums";
   const pitchShift = tonalMode ? semitoneDistance(sourceRoot, targetRoot) : drumPitchShift;
+
+  useEffect(() => () => {
+    operationGateRef.current.invalidate();
+    audioRef.current?.pause();
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    translatedPlaybackRef.current?.stop();
+  }, []);
 
   function addAsset(input: NewProjectAudioAsset) {
     const result = addProjectAsset(assetsRef.current, input);
@@ -141,12 +163,16 @@ export function App() {
     assetsRef.current = next;
     setAssets(next);
     setRoutedResampleAsset((current) => current && !next.some((asset) => asset.id === current.id) ? null : current);
+    if (currentSourceAssetId && !next.some((asset) => asset.id === currentSourceAssetId)) {
+      clearTranslateSource("SOURCE REMOVED — CHOOSE NEW MATERIAL");
+    }
   }
 
   function clearAssets() {
     assetsRef.current = [];
     setAssets([]);
     setRoutedResampleAsset(null);
+    clearTranslateSource("PROJECT BIN CLEARED — CHOOSE NEW MATERIAL");
   }
 
   function stopPlayback() {
@@ -171,6 +197,19 @@ export function App() {
     setBusy(false);
   }
 
+  function clearTranslateSource(nextMessage = "READY — DROP A BEAT OR STEM") {
+    cancelWorkspaceOperation();
+    stopPlayback();
+    if (inputRef.current) inputRef.current.value = "";
+    setCurrentSourceAssetId(null);
+    setFile(null);
+    setBuffer(null);
+    setSamples(null);
+    setRhythm(null);
+    setTranslatedBuffer(null);
+    setMessage(nextMessage);
+  }
+
   function invalidateTranslation(nextMessage = "TARGET CHANGED — TRANSLATE AGAIN") {
     cancelWorkspaceOperation();
     translatedPlaybackRef.current?.stop();
@@ -180,9 +219,11 @@ export function App() {
     setMessage(nextMessage);
   }
 
-  async function ingest(nextFile: File) {
+  async function ingest(nextFile: File, existingAsset?: ProjectAudioAsset) {
     const token = operationGateRef.current.begin();
+    const uploadMode = mode;
     stopPlayback();
+    setCurrentSourceAssetId(null);
     setFile(null);
     setBuffer(null);
     setSamples(null);
@@ -195,7 +236,15 @@ export function App() {
       const mono = monoSamples(decoded);
       const rhythmResult = analyzeRhythm(mono, decoded.sampleRate);
       if (!operationGateRef.current.isCurrent(token)) return;
+
+      const sourceAsset = existingAsset ?? addAsset({
+        file: nextFile,
+        kind: assetKindForTranslateMode(uploadMode),
+        label: nextFile.name,
+        origin: "upload",
+      });
       const detectedBpm = Math.round(rhythmResult.bpm * 10) / 10;
+      setCurrentSourceAssetId(sourceAsset.id);
       setFile(nextFile);
       setBuffer(decoded);
       setSamples(mono);
@@ -223,7 +272,7 @@ export function App() {
     if (destination === "translate") {
       setMode(translateModeForAsset(asset));
       setWorkspace("translate");
-      void ingest(asset.file);
+      void ingest(asset.file, asset);
       return;
     }
     cancelWorkspaceOperation();
@@ -231,9 +280,11 @@ export function App() {
   }
 
   async function translate() {
-    if (!buffer) return;
+    if (!buffer || !file || !currentSourceAssetId) return;
     const token = operationGateRef.current.begin();
     const inputBuffer = buffer;
+    const inputFile = file;
+    const inputSourceAssetId = currentSourceAssetId;
     const inputSourceBpm = sourceBpm;
     const inputTargetBpm = targetBpm;
     const inputPitchShift = pitchShift;
@@ -251,6 +302,16 @@ export function App() {
       }
       const transformed = await transformAudio({ input: inputBuffer, sourceBpm: inputSourceBpm, targetBpm: inputTargetBpm, semitones: inputPitchShift });
       if (!operationGateRef.current.isCurrent(token)) return;
+
+      const outputName = translatedName(inputFile.name, inputTargetBpm, inputPitchShift);
+      const outputFile = new File([audioBufferToWav(transformed)], outputName, { type: "audio/wav" });
+      addAsset({
+        file: outputFile,
+        kind: "translated",
+        label: outputName,
+        origin: "translate",
+        parentId: inputSourceAssetId,
+      });
       setTranslatedBuffer(transformed);
       const pitchText = inputPitchShift === 0 ? "PITCH UNCHANGED" : `${inputPitchShift > 0 ? "+" : ""}${inputPitchShift} SEMITONES`;
       setMessage(`TRANSLATED READY — ${inputTargetBpm} BPM // ${pitchText}`);
@@ -314,15 +375,7 @@ export function App() {
   }
 
   function replaceFile() {
-    cancelWorkspaceOperation();
-    stopPlayback();
-    if (inputRef.current) inputRef.current.value = "";
-    setFile(null);
-    setBuffer(null);
-    setSamples(null);
-    setRhythm(null);
-    setTranslatedBuffer(null);
-    setMessage("READY — DROP A BEAT OR STEM");
+    clearTranslateSource();
   }
 
   function switchMode(next: Mode) {
