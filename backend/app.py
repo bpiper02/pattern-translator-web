@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import uuid
 from pathlib import Path
@@ -76,6 +77,7 @@ def run_audio_separator(
     *,
     model: str | None = None,
     ensemble_preset: str | None = None,
+    custom_output_names: dict[str, str] | None = None,
 ) -> list[Path]:
     if bool(model) == bool(ensemble_preset):
         raise RuntimeError("Specify exactly one separator model or ensemble preset")
@@ -91,6 +93,8 @@ def run_audio_separator(
         command.extend(["--ensemble_preset", ensemble_preset])
     else:
         command.extend(["--model_filename", model or ""])
+    if custom_output_names:
+        command.extend(["--custom_output_names", json.dumps(custom_output_names, separators=(",", ":"))])
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
@@ -193,6 +197,7 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
                     input_path,
                     job_dir / "vocal_refine",
                     ensemble_preset=selected.vocal_ensemble_preset,
+                    custom_output_names={"Vocals": "vocals", "Instrumental": "instrumental"},
                 )
                 vocal_engine = f"ensemble:{selected.vocal_ensemble_preset}"
             else:
@@ -200,6 +205,7 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
                     input_path,
                     job_dir / "vocal_refine",
                     model=selected.vocal_model,
+                    custom_output_names={"Vocals": "vocals", "Instrumental": "instrumental"},
                 )
                 vocal_engine = selected.vocal_model or "unknown"
             pair = collect_pair(pair_paths)
