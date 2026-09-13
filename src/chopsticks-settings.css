@@ -1,0 +1,78 @@
+:root{
+  --cs-accent:#e2231a;
+  --cs-accent-hot:#ff392f;
+  --cs-accent-dark:#73110d;
+  --cs-pad-hot:color-mix(in srgb,var(--cs-pad) 72%,white 28%);
+}
+:root[data-cs-skin="red"]{--cs-accent:#e2231a;--cs-accent-hot:#ff392f;--cs-accent-dark:#73110d}
+:root[data-cs-skin="violet"]{--cs-accent:#8d46ff;--cs-accent-hot:#ad75ff;--cs-accent-dark:#442070}
+:root[data-cs-skin="acid"]{--cs-accent:#87d92f;--cs-accent-hot:#a8f15b;--cs-accent-dark:#3e6d14}
+:root[data-cs-skin="amber"]{--cs-accent:#e49721;--cs-accent-hot:#ffb743;--cs-accent-dark:#70450d}
+
+.workspaceTabs button.active,
+.modeButtons button.active,
+.splitModeTabs button.active,
+.stemToggle.active,
+.processButton,
+.primaryExport{
+  background:linear-gradient(var(--cs-accent-hot),var(--cs-accent-dark))!important;
+  border-color:color-mix(in srgb,var(--cs-accent) 70%,white 20%)!important;
+  box-shadow:inset 0 1px color-mix(in srgb,var(--cs-accent-hot) 65%,white 25%),0 2px 8px #0007!important;
+}
+.workspaceTabs button:hover:not(:disabled),
+.modeButtons button:hover:not(:disabled),
+.utilityButton:hover:not(:disabled),
+.assetSendRow button:hover,
+.sampleSlot:hover,
+.splitDrop:hover{
+  border-color:color-mix(in srgb,var(--cs-accent) 65%,#555 35%)!important;
+}
+.assetCard:hover{border-left-color:var(--cs-accent)!important}
+.assetKind{color:var(--cs-accent-hot)!important}
+.progressBlocks{background:repeating-linear-gradient(to right,var(--cs-accent) 0,var(--cs-accent) 8px,color-mix(in srgb,var(--cs-accent-dark) 35%,#111 65%) 8px,color-mix(in srgb,var(--cs-accent-dark) 35%,#111 65%) 11px)!important}
+.sampleSlot::before{background:linear-gradient(var(--cs-pad),color-mix(in srgb,var(--cs-pad) 35%,#090909 65%))!important}
+.sampleSlot:has(.utilityButton:not(:disabled)):hover::before{background:var(--cs-pad-hot)!important}
+.stepCell.on{background:linear-gradient(var(--cs-pad-hot),var(--cs-pad))!important;border-color:color-mix(in srgb,var(--cs-pad-hot) 75%,white 25%)!important;border-bottom-color:color-mix(in srgb,var(--cs-pad) 42%,#090909 58%)!important}
+
+.uiDock{position:fixed;right:14px;bottom:14px;z-index:80;font-family:"Courier New",monospace;color:#eee8e2}
+.uiDockButtons{display:flex;justify-content:flex-end;gap:6px}
+.uiDockButtons>button,.uiDockPanelHeader button{
+  width:36px;height:36px;display:grid;place-items:center;padding:0;
+  border:1px solid #3b3b40;border-radius:5px;
+  background:#141416;color:#aaa49f;box-shadow:0 5px 16px #0008;cursor:pointer
+}
+.uiDockButtons>button:hover,.uiDockButtons>button.active,.uiDockPanelHeader button:hover{border-color:var(--cs-accent);color:#fff;background:#211514}
+.uiDockPanel{
+  width:min(360px,calc(100vw - 28px));max-height:min(520px,72vh);overflow:auto;
+  margin-top:7px;padding:10px;background:linear-gradient(180deg,#18181b,#0d0d0f);
+  border:1px solid #3b3b40;border-top:2px solid var(--cs-accent);border-radius:7px;
+  box-shadow:0 18px 45px #000c,inset 0 1px rgba(255,255,255,.04)
+}
+.uiDockPanelHeader{display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px solid #29292d}
+.uiDockPanelHeader>b{font-size:11px;letter-spacing:.13em}
+.uiDockPanelHeader button{width:28px;height:28px;box-shadow:none}
+.uiDockInfo{display:flex;flex-direction:column;gap:9px;padding-top:9px}
+.uiDockInfo p{margin:0;padding:8px;background:#111113;border:1px solid #2d2d31;border-radius:4px;color:#aaa49f;font:9px/1.5 "Courier New",monospace}
+.uiDockInfo b{color:#f2ece6}
+.uiDockSkin{display:flex;flex-direction:column;gap:10px;padding-top:10px}
+.uiDockLabel{font:700 8px "Courier New",monospace;letter-spacing:.12em;color:#817b78}
+.skinChoices{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.skinChoices button{
+  min-width:0;display:flex;align-items:center;gap:7px;padding:7px;
+  border:1px solid #303035;border-radius:4px;background:#111113;color:#aaa49f;
+  font:8px "Courier New",monospace;cursor:pointer
+}
+.skinChoices button i{width:14px;height:14px;border-radius:50%;border:1px solid #ffffff36;box-shadow:0 0 8px #0008;flex:0 0 auto}
+.skinChoices button.selected{border-color:var(--cs-accent);color:#fff;background:#1d1717}
+.padColorControl{display:flex;flex-direction:column;gap:6px}
+.padColorControl>div{display:flex;align-items:center;gap:8px;padding:7px;background:#101012;border:1px solid #303035;border-radius:4px}
+.padColorControl input[type="color"]{width:42px;height:32px;padding:2px;border:1px solid #3b3b40;border-radius:3px;background:#09090a}
+.padColorControl code{font:10px "Courier New",monospace;color:#c1bbb6}
+.resetSkin{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid #39393e;border-radius:4px;background:#171719;color:#b6b0ab;font:8px "Courier New",monospace;cursor:pointer}
+.resetSkin:hover{border-color:var(--cs-accent);color:#fff}
+.uiDockSkin small{color:#716c68;font:8px/1.45 "Courier New",monospace}
+
+@media(max-width:820px){
+  .uiDock{right:8px;bottom:8px}
+  .uiDockPanel{max-height:65vh}
+}
