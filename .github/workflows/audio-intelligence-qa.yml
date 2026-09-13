@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/audio-intelligence-overhaul
+      - feat/voice-midi-flow
       - spike/melody-transcription-bakeoff
   workflow_dispatch:
 
@@ -27,7 +28,7 @@ jobs:
         run: node qa/audio-intelligence-baseline.mjs
 
       - name: Compile audio intelligence modules for regression
-        run: npx tsc src/analysis/voiceRhythm.ts src/analysis/rhythmCapture.ts src/analysis/voiceMelodyCore.ts src/analysis/voiceMelody.ts --outDir .qa-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+        run: npx tsc src/analysis/voiceRhythm.ts src/analysis/rhythmCapture.ts src/analysis/voiceMelodyCore.ts src/analysis/voiceMelody.ts src/midi.ts --outDir .qa-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Voice rhythm regression
         run: node qa/voice-rhythm-regression.mjs
@@ -37,6 +38,9 @@ jobs:
 
       - name: Production voice melody regression
         run: node qa/voice-melody-regression.mjs
+
+      - name: Melody MIDI regression
+        run: node qa/melody-midi-regression.mjs
 
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
