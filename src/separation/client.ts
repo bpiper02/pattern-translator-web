@@ -9,6 +9,9 @@ export type SplitStemKind =
   | "cymbals"
   | "toms";
 
+export type FullSplitProfile = "balanced" | "hq";
+export type DrumSplitProfile = "standard" | "hq";
+
 export type SplitStem = {
   kind: SplitStemKind;
   label: string;
@@ -18,6 +21,8 @@ export type SplitStem = {
 
 export type SplitResponse = {
   jobId: string;
+  profile: string;
+  engine: string;
   stems: SplitStem[];
 };
 
@@ -27,11 +32,11 @@ export function splitterApiBase() {
   return (import.meta.env.VITE_SPLITTER_API as string | undefined)?.replace(/\/$/, "") || DEFAULT_API;
 }
 
-async function postAudio(path: string, file: File): Promise<SplitResponse> {
+async function postAudio(path: string, file: File, profile: string): Promise<SplitResponse> {
   const form = new FormData();
   form.append("file", file);
 
-  const response = await fetch(`${splitterApiBase()}${path}`, {
+  const response = await fetch(`${splitterApiBase()}${path}?profile=${encodeURIComponent(profile)}`, {
     method: "POST",
     body: form,
   });
@@ -48,12 +53,12 @@ async function postAudio(path: string, file: File): Promise<SplitResponse> {
   return response.json() as Promise<SplitResponse>;
 }
 
-export function splitFullMix(file: File) {
-  return postAudio("/split/full", file);
+export function splitFullMix(file: File, profile: FullSplitProfile = "balanced") {
+  return postAudio("/split/full", file, profile);
 }
 
-export function splitDrumStem(file: File) {
-  return postAudio("/split/drums", file);
+export function splitDrumStem(file: File, profile: DrumSplitProfile = "hq") {
+  return postAudio("/split/drums", file, profile);
 }
 
 export async function stemUrlToFile(stem: SplitStem): Promise<File> {
