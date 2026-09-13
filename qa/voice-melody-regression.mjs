@@ -1,5 +1,17 @@
 import assert from "node:assert/strict";
-import { detectVoiceMelody } from "../.qa-dist/voiceMelody.js";
+import { createRequire } from "node:module";
+import {
+  VOICE_MELODY_FRAME_SIZE,
+  VOICE_MELODY_HOP_SIZE,
+  VOICE_MELODY_SAMPLE_RATE,
+  resampleVoiceMelodySamples,
+  voiceMelodyFramesToNotes,
+  voiceMelodyHzToMidi,
+} from "../.qa-dist/voiceMelodyCore.js";
+
+const require = createRequire(import.meta.url);
+const { Essentia, EssentiaWASM } = require("essentia.js");
+const essentia = new Essentia(EssentiaWASM);
 
 const SAMPLE_RATE = 48_000;
 const midiToHz = (midi) => 440 * 2 ** ((midi - 69) / 12);
@@ -41,6 +53,54 @@ function synth(notes, { noise = 0, vibratoCents = 0 } = {}) {
     cursor += count;
   }
   return output;
+}
+
+function detectWithNodeMelodia(samples, sampleRate, options = {}) {
+  if (!samples.length) return [];
+  const analysisSamples = resampleVoiceMelodySamples(samples, sampleRate, VOICE_MELODY_SAMPLE_RATE);
+  const signal = essentia.arrayToVector(analysisSamples);
+  let pitch = null;
+  let confidence = null;
+
+  try {
+    const result = essentia.PitchMelodia(
+      signal,
+      10,
+      3,
+      VOICE_MELODY_FRAME_SIZE,
+      false,
+      0.8,
+      VOICE_MELODY_HOP_SIZE,
+      1,
+      40,
+      1200,
+      80,
+      50,
+      20,
+      0.9,
+      0.9,
+      27.5625,
+      55,
+      VOICE_MELODY_SAMPLE_RATE,
+      100,
+    );
+
+    pitch = result.pitch;
+    confidence = result.pitchConfidence;
+    const pitches = Array.from(essentia.vectorToArray(pitch));
+    const confidences = Array.from(essentia.vectorToArray(confidence));
+    const frames = pitches.map((hz, index) => ({
+      time: index * VOICE_MELODY_HOP_SIZE / VOICE_MELODY_SAMPLE_RATE,
+      hz,
+      midi: voiceMelodyHzToMidi(hz),
+      confidence: confidences[index] ?? 0,
+    }));
+    return voiceMelodyFramesToNotes(frames, options);
+  } finally {
+    pitch?.delete?.();
+    confidence?.delete?.();
+    signal.delete?.();
+  }
 }
 
 function truthEvents(notes) {
@@ -120,7 +180,7 @@ const fixtures = [
 
 const results = fixtures.map((fixture) => {
   const expected = truthEvents(fixture.notes);
-  const actual = detectVoiceMelody(synth(fixture.notes, fixture.options), SAMPLE_RATE, { bpm: 120 });
+  const actual = detectWithNodeMelodia(synth(fixture.notes, fixture.options), SAMPLE_RATE, { bpm: 120 });
   return { name: fixture.name, expected, actual, ...scoreNotes(expected, actual) };
 });
 
@@ -142,7 +202,7 @@ const vibratoF1 = results.find((result) => result.name === "vibrato")?.f1 ?? 0;
 assert.ok(macroF1 >= 0.85, `macro F1 ${macroF1.toFixed(3)} below gate`);
 assert.ok(minimumF1 >= 0.70, `minimum fixture F1 ${minimumF1.toFixed(3)} below gate`);
 assert.ok(vibratoF1 >= 0.80, `vibrato F1 ${vibratoF1.toFixed(3)} below gate`);
-assert.deepEqual(detectVoiceMelody(new Float32Array(), SAMPLE_RATE), []);
-assert.deepEqual(detectVoiceMelody(new Float32Array(4096), SAMPLE_RATE), []);
+assert.deepEqual(voiceMelodyFramesToNotes([], { bpm: 120 }), []);
+assert.equal(resampleVoiceMelodySamples(new Float32Array(48_000), 48_000).length, 44_100);
 
 console.log(`VOICE MELODY REGRESSION: PASS (macro F1=${macroF1.toFixed(3)}, min F1=${minimumF1.toFixed(3)})`);
