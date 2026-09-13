@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/audio-intelligence-overhaul
+      - feat/beat-pattern-accuracy
       - spike/melody-transcription-bakeoff
   workflow_dispatch:
 
@@ -37,6 +38,14 @@ jobs:
 
       - name: Production voice melody regression
         run: node qa/voice-melody-regression.mjs
+
+      - name: Compile beat-grid core for regression
+        if: github.ref_name == 'feat/beat-pattern-accuracy'
+        run: npx tsc src/analysis/drumGrid.ts --outDir .qa-beat-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+
+      - name: Drum grid alignment regression
+        if: github.ref_name == 'feat/beat-pattern-accuracy'
+        run: node qa/drum-grid-alignment.mjs
 
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
