@@ -116,6 +116,14 @@ jobs:
         if: github.ref_name == 'feat/split-asset-bin'
         run: node qa/project-assets.mjs
 
+      - name: Backend separation profile regression
+        if: github.ref_name == 'feat/split-asset-bin'
+        run: python qa/separation-profiles.py
+
+      - name: Backend Python syntax regression
+        if: github.ref_name == 'feat/split-asset-bin'
+        run: python -m py_compile backend/app.py backend/separation_profiles.py
+
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
         run: node qa/melody-bakeoff-v2.cjs
