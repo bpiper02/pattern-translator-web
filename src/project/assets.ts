@@ -2,6 +2,7 @@ export type AudioAssetKind =
   | "mix"
   | "drums"
   | "bass"
+  | "melody"
   | "vocals"
   | "other"
   | "kick"
