@@ -16,7 +16,8 @@ def check(actual, expected, label):
 
 check(full_mix_profile("balanced").broad_model, "htdemucs_ft.yaml", "balanced broad model")
 check(full_mix_profile("balanced").vocal_model, None, "balanced vocal stage")
-check(full_mix_profile("hq").vocal_model, "melband_roformer_big_beta4.ckpt", "hq vocal model")
+check(full_mix_profile("balanced").vocal_ensemble_preset, None, "balanced vocal ensemble")
+check(full_mix_profile("hq").vocal_ensemble_preset, "vocal_balanced", "hq vocal ensemble")
 check(drum_profile("standard").model, None, "standard drum model")
 check(drum_profile("hq").model, "MDX23C-DrumSep-aufr33-jarredou.ckpt", "hq drum model")
 
@@ -38,8 +39,8 @@ for name, expected in broad_cases.items():
     check(classify_broad(Path(name)), expected, name)
 
 pair_cases = {
-    "song_(Vocals)_melband_roformer_big_beta4.wav": "vocals",
-    "song_(Instrumental)_melband_roformer_big_beta4.wav": "instrumental",
+    "song_(Vocals)_vocal_balanced.wav": "vocals",
+    "song_(Instrumental)_vocal_balanced.wav": "instrumental",
     "song_no_vocals.wav": "instrumental",
 }
 for name, expected in pair_cases.items():
