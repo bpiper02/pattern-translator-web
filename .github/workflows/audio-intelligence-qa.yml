@@ -7,6 +7,7 @@ on:
       - feat/beat-pattern-accuracy
       - feat/beat-timbre-accuracy
       - feat/layered-drum-hits
+      - feat/preview-export-parity
       - spike/melody-transcription-bakeoff
   workflow_dispatch:
 
@@ -42,44 +43,52 @@ jobs:
         run: node qa/voice-melody-regression.mjs
 
       - name: Compile beat-grid core for regression
-        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits'
+        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: npx tsc src/analysis/drumGrid.ts --outDir .qa-beat-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum grid alignment regression
-        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits'
+        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: node qa/drum-grid-alignment.mjs
 
       - name: Compile drum timbre core for regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: npx tsc src/analysis/drumTimbreCore.ts --outDir .qa-timbre-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum timbre clustering regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: node qa/drum-timbre-core.mjs
 
       - name: Drum timbre Essentia regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: node qa/drum-timbre-essentia.mjs
 
       - name: Bundle layered drum core for regression
-        if: github.ref_name == 'feat/layered-drum-hits'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: npx esbuild src/analysis/layeredDrumsCore.ts --bundle --platform=node --format=esm --outfile=.qa-layer-dist/layeredDrumsCore.js
 
       - name: Layered drum core regression
-        if: github.ref_name == 'feat/layered-drum-hits'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: node qa/layered-drums-core.mjs
 
       - name: Layered drum Essentia regression
-        if: github.ref_name == 'feat/layered-drum-hits'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: node qa/layered-drums-essentia.mjs
 
       - name: Compile drum slice boundary core
-        if: github.ref_name == 'feat/layered-drum-hits'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: npx tsc src/audio/drumSlice.ts --outDir .qa-slice-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum slice layering regression
-        if: github.ref_name == 'feat/layered-drum-hits'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity'
         run: node qa/drum-slice-layering.mjs
+
+      - name: Compile pattern renderer for parity regression
+        if: github.ref_name == 'feat/preview-export-parity'
+        run: npx tsc src/audio/patternRender.ts --outDir .qa-render-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+
+      - name: Pattern render parity regression
+        if: github.ref_name == 'feat/preview-export-parity'
+        run: node qa/pattern-render-parity.mjs
 
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
