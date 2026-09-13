@@ -1,0 +1,175 @@
+:root{
+  --cs-pad:#d92920;
+  --cs-pad-hot:#ff4a3f;
+  --cs-source-marker:#8b8581;
+  --cs-playhead:#fff3ea;
+}
+
+.resampleWorkspace{display:flex!important;flex-direction:column;gap:9px}
+.resampleWorkspace>.module{margin:0!important}
+
+.autoKitSource{gap:7px!important;margin:7px 0 10px!important}
+.autoKitReadout{
+  background:#130908!important;
+  border:1px solid #48221f!important;
+  border-radius:4px;
+  color:#ff796f!important;
+  box-shadow:inset 0 0 14px #000!important;
+}
+.autoKitReadout span{color:#985049!important}
+.autoKitButton{min-width:156px!important}
+
+.sampleRack{
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:8px!important;
+}
+.sampleSlot{
+  position:relative;
+  min-height:132px;
+  display:grid!important;
+  grid-template-columns:1fr 1fr!important;
+  grid-template-rows:auto 1fr auto!important;
+  align-items:stretch!important;
+  gap:7px!important;
+  padding:10px!important;
+  background:linear-gradient(145deg,#19191c,#0d0d0f)!important;
+  border:1px solid #35353a!important;
+  border-bottom:3px solid #09090a!important;
+  border-radius:7px!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.04),0 5px 10px #0005!important;
+  overflow:hidden;
+}
+.sampleSlot::before{
+  content:"";
+  position:absolute;
+  inset:0 auto 0 0;
+  width:3px;
+  background:linear-gradient(var(--cs-pad),#58100c);
+  opacity:.85;
+}
+.sampleSlot b{
+  grid-column:1/-1;
+  color:#fff4ed!important;
+  font:900 13px "Courier New",monospace!important;
+  letter-spacing:.08em;
+}
+.sampleSlot span{
+  grid-column:1/-1!important;
+  align-self:start;
+  color:#716c69!important;
+  font-size:8px!important;
+  white-space:normal!important;
+  line-height:1.3;
+  min-height:22px;
+}
+.sampleSlot .stemUploadButton,.sampleSlot .utilityButton{
+  align-self:end!important;
+  min-height:36px!important;
+  height:auto!important;
+  font-size:8px!important;
+  padding:6px!important;
+}
+.sampleSlot .utilityButton{
+  background:linear-gradient(#5c1814,#2c0d0b)!important;
+  border-color:#8a2924!important;
+  color:#f3d6d2!important;
+}
+.sampleSlot:has(.utilityButton:not(:disabled)):hover{border-color:#5e3936!important;transform:translateY(-1px)}
+.sampleSlot:has(.utilityButton:not(:disabled)):hover::before{background:var(--cs-pad-hot)}
+
+.sequencerTopbar{
+  display:grid!important;
+  grid-template-columns:110px repeat(4,max-content)!important;
+  align-items:stretch!important;
+  gap:6px!important;
+  margin-bottom:9px!important;
+  padding:7px;
+  background:#0e0e10;
+  border:1px solid #303035;
+  border-radius:5px;
+}
+.sequencerTopbar .miniControl{min-width:0!important}
+.sequencerTopbar .utilityButton,.sequencerTopbar .processButton{align-self:stretch!important;height:auto!important}
+.sourcePreviewButton{background:linear-gradient(#2a292d,#19191c)!important}
+
+.patternLegend{
+  background:#0f0f11!important;
+  border:1px solid #303035!important;
+  border-radius:4px;
+  color:#817b77!important;
+  padding:6px 8px!important;
+}
+.patternLegend i{border:1px solid #504d4a!important;border-radius:2px}
+.legendSource{background:repeating-linear-gradient(135deg,#77716e 0,#77716e 3px,#343438 3px,#343438 6px)!important}
+.legendWorking{background:var(--cs-pad)!important;border-color:var(--cs-pad-hot)!important}
+
+.stepGrid{
+  padding:10px!important;
+  background:linear-gradient(#0d0d0f,#09090a)!important;
+  border:1px solid #323237!important;
+  border-radius:6px;
+  box-shadow:inset 0 0 24px #0008!important;
+}
+.stepHeader,.stepRow{grid-template-columns:78px repeat(16,minmax(29px,1fr))!important;gap:4px!important;min-width:800px!important}
+.stepHeader b{color:#5f5a57!important;font-size:8px!important}
+.stepRow{margin:5px 0!important}
+.laneAudition{
+  height:32px!important;
+  border-color:#39393e!important;
+  color:#aaa49f!important;
+  background:#18181b!important;
+}
+.stepCell{
+  height:32px!important;
+  border:1px solid #333338!important;
+  border-bottom:3px solid #101012!important;
+  border-radius:4px!important;
+  background:linear-gradient(#29292d,#1b1b1e)!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.045)!important;
+  transition:transform .08s ease,background .08s ease,border-color .08s ease;
+}
+.stepCell:hover:not(:disabled){border-color:#5b3c39!important;transform:translateY(-1px)}
+.stepCell.on{
+  background:linear-gradient(var(--cs-pad-hot),var(--cs-pad))!important;
+  border-color:#ff685f!important;
+  border-bottom-color:#68110d!important;
+  box-shadow:inset 0 1px #ff8179,0 0 12px color-mix(in srgb,var(--cs-pad) 32%,transparent)!important;
+}
+.stepCell.sourceHit::after{
+  left:5px!important;right:5px!important;bottom:4px!important;height:3px!important;
+  background:repeating-linear-gradient(to right,var(--cs-source-marker) 0,var(--cs-source-marker) 4px,#3d3b3a 4px,#3d3b3a 7px)!important;
+  opacity:.75!important;
+}
+.stepCell.on.sourceHit::after{background:#ffd8d3!important;opacity:.9!important}
+.stepCell.playhead{outline:2px solid var(--cs-playhead)!important;outline-offset:1px!important;filter:brightness(1.16)}
+.stepCell:disabled{opacity:.22!important}
+
+.voiceCapture{
+  grid-template-columns:minmax(130px,180px) minmax(150px,190px) minmax(0,1fr)!important;
+  align-items:stretch!important;
+}
+.voiceCapture .miniControl,.voiceCapture .recordButton,.voiceCapture .voiceNote{min-height:64px}
+.voiceCapture .recordButton{align-self:stretch!important}
+.recordButton.active{background:linear-gradient(#e5372d,#8a1510)!important;border-color:#ff5e54!important;color:#fff!important;box-shadow:0 0 14px #d92a2238!important}
+
+.resampleActions{display:grid!important;grid-template-columns:minmax(160px,1fr) auto auto!important;gap:6px!important}
+.resampleActions .processButton{justify-self:stretch}
+.resampleStatus{border-radius:4px}
+
+@media(max-width:1100px){
+  .sampleRack{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .sequencerTopbar{grid-template-columns:110px repeat(2,1fr)!important}
+}
+@media(max-width:700px){
+  .sampleRack{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .sampleSlot{min-height:118px;padding:8px!important}
+  .sequencerTopbar{display:flex!important;align-items:stretch!important}
+  .sequencerTopbar>*{flex:1 1 140px}
+  .voiceCapture{grid-template-columns:1fr 1fr!important}
+  .voiceCapture .voiceNote{grid-column:1/-1}
+  .resampleActions{grid-template-columns:1fr!important}
+}
+@media(max-width:430px){
+  .sampleRack{grid-template-columns:1fr!important}
+  .sampleSlot{min-height:108px}
+}
