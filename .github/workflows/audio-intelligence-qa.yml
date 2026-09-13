@@ -56,6 +56,10 @@ jobs:
         if: github.ref_name == 'feat/beat-timbre-accuracy'
         run: node qa/drum-timbre-core.mjs
 
+      - name: Drum timbre Essentia regression
+        if: github.ref_name == 'feat/beat-timbre-accuracy'
+        run: node qa/drum-timbre-essentia.mjs
+
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
         run: node qa/melody-bakeoff-v2.cjs
