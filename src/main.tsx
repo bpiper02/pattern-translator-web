@@ -7,6 +7,7 @@ import "./resample.css";
 import "./split.css";
 import "./chopsticks.css";
 import "./chopsticks-copy.css";
+import "./chopsticks-tools.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
