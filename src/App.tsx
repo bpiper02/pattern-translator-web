@@ -19,6 +19,7 @@ import {
 
 type Workspace = "translate" | "split" | "edit" | "resample";
 type Mode = "beat" | "drums" | "bass" | "melody";
+type AssetDestination = "split" | "resample" | "translate";
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const SEMITONES = Array.from({ length: 25 }, (_, index) => index - 12);
@@ -37,6 +38,13 @@ function semitoneDistance(source: string, target: string) {
   if (diff > 6) diff -= 12;
   if (diff < -6) diff += 12;
   return diff;
+}
+
+function translateModeForAsset(asset: ProjectAudioAsset): Mode {
+  if (asset.kind === "mix" || asset.kind === "render") return "beat";
+  if (["drums", "kick", "snare", "hihat", "cymbals", "toms"].includes(asset.kind)) return "drums";
+  if (asset.kind === "bass") return "bass";
+  return "melody";
 }
 
 function VintageProgress({ label }: { label: string }) {
@@ -107,6 +115,7 @@ export function App() {
   const [ratio, setRatio] = useState(0);
   const [message, setMessage] = useState("READY — DROP A BEAT OR STEM");
   const [assets, setAssets] = useState<ProjectAudioAsset[]>([]);
+  const [routedResampleAsset, setRoutedResampleAsset] = useState<ProjectAudioAsset | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -128,11 +137,13 @@ export function App() {
     const next = removeProjectAsset(assetsRef.current, id);
     assetsRef.current = next;
     setAssets(next);
+    setRoutedResampleAsset((current) => current && !next.some((asset) => asset.id === current.id) ? null : current);
   }
 
   function clearAssets() {
     assetsRef.current = [];
     setAssets([]);
+    setRoutedResampleAsset(null);
   }
 
   function stopPlayback() {
@@ -183,6 +194,22 @@ export function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function sendAsset(asset: ProjectAudioAsset, destination: AssetDestination) {
+    stopPlayback();
+    if (destination === "resample") {
+      setRoutedResampleAsset(asset);
+      setWorkspace("resample");
+      return;
+    }
+    if (destination === "translate") {
+      setMode(translateModeForAsset(asset));
+      setWorkspace("translate");
+      void ingest(asset.file);
+      return;
+    }
+    setWorkspace("split");
   }
 
   async function translate() {
@@ -308,14 +335,14 @@ export function App() {
         <button className={workspace === "resample" ? "active" : ""} onClick={() => switchWorkspace("resample")}>RESAMPLE</button>
       </nav>
 
-      <AssetBin assets={assets} onRemove={removeAsset} onClear={clearAssets} />
+      <AssetBin assets={assets} onRemove={removeAsset} onClear={clearAssets} onSend={sendAsset} />
 
       {workspace === "split" ? (
         <SplitWorkspace assets={assets} onAddAsset={addAsset} />
       ) : workspace === "edit" ? (
         <StemEditor />
       ) : workspace === "resample" ? (
-        <ResampleWorkspace />
+        <ResampleWorkspace routedAsset={routedResampleAsset} />
       ) : (
         <>
           <section className="module modeModule">
