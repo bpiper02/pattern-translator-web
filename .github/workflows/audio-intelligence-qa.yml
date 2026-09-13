@@ -118,6 +118,8 @@ jobs:
 
       - name: Backend separation profile regression
         if: github.ref_name == 'feat/split-asset-bin'
+        env:
+          PYTHONPATH: .
         run: python qa/separation-profiles.py
 
       - name: Backend Python syntax regression
