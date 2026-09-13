@@ -30,7 +30,7 @@ const fixtures = [
     name: "irregular-beat-spacing",
     bpm: 120,
     ticks: [0.4, 0.92, 1.41, 1.93, 2.44],
-    times: [0.4, 0.66, 0.92, 1.655, 1.93],
+    times: [0.4, 0.66, 0.92, 1.67, 1.93],
     expectedBeats: [0, 0.5, 1, 2.5, 3],
   },
   {
