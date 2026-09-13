@@ -73,6 +73,14 @@ jobs:
         if: github.ref_name == 'feat/layered-drum-hits'
         run: node qa/layered-drums-essentia.mjs
 
+      - name: Compile drum slice boundary core
+        if: github.ref_name == 'feat/layered-drum-hits'
+        run: npx tsc src/audio/drumSlice.ts --outDir .qa-slice-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+
+      - name: Drum slice layering regression
+        if: github.ref_name == 'feat/layered-drum-hits'
+        run: node qa/drum-slice-layering.mjs
+
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
         run: node qa/melody-bakeoff-v2.cjs
