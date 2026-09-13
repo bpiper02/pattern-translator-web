@@ -69,6 +69,10 @@ jobs:
         if: github.ref_name == 'feat/layered-drum-hits'
         run: node qa/layered-drums-core.mjs
 
+      - name: Layered drum Essentia regression
+        if: github.ref_name == 'feat/layered-drum-hits'
+        run: node qa/layered-drums-essentia.mjs
+
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
         run: node qa/melody-bakeoff-v2.cjs
