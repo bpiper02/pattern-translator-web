@@ -32,11 +32,23 @@ export function splitterApiBase() {
   return (import.meta.env.VITE_SPLITTER_API as string | undefined)?.replace(/\/$/, "") || DEFAULT_API;
 }
 
+function resolveStemUrls(result: SplitResponse, apiBase: string): SplitResponse {
+  const base = `${apiBase.replace(/\/$/, "")}/`;
+  return {
+    ...result,
+    stems: result.stems.map((stem) => ({
+      ...stem,
+      url: new URL(stem.url, base).toString(),
+    })),
+  };
+}
+
 async function postAudio(path: string, file: File, profile: string): Promise<SplitResponse> {
   const form = new FormData();
   form.append("file", file);
+  const apiBase = splitterApiBase();
 
-  const response = await fetch(`${splitterApiBase()}${path}?profile=${encodeURIComponent(profile)}`, {
+  const response = await fetch(`${apiBase}${path}?profile=${encodeURIComponent(profile)}`, {
     method: "POST",
     body: form,
   });
@@ -50,7 +62,8 @@ async function postAudio(path: string, file: File, profile: string): Promise<Spl
     throw new Error(detail);
   }
 
-  return response.json() as Promise<SplitResponse>;
+  const result = await response.json() as SplitResponse;
+  return resolveStemUrls(result, apiBase);
 }
 
 export function splitFullMix(file: File, profile: FullSplitProfile = "balanced") {
