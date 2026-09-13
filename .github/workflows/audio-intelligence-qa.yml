@@ -61,9 +61,9 @@ jobs:
         if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits'
         run: node qa/drum-timbre-essentia.mjs
 
-      - name: Compile layered drum core for regression
+      - name: Bundle layered drum core for regression
         if: github.ref_name == 'feat/layered-drum-hits'
-        run: npx tsc src/analysis/drumTimbreCore.ts src/analysis/layeredDrumsCore.ts --outDir .qa-layer-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+        run: npx esbuild src/analysis/layeredDrumsCore.ts --bundle --platform=node --format=esm --outfile=.qa-layer-dist/layeredDrumsCore.js
 
       - name: Layered drum core regression
         if: github.ref_name == 'feat/layered-drum-hits'
