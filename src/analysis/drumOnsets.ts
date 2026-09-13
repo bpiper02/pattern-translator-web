@@ -1,9 +1,10 @@
 import Essentia from "essentia.js/dist/essentia.js-core.es.js";
 import { EssentiaWASM } from "essentia.js/dist/essentia-wasm.es.js";
 import type { DrumHit } from "../audio";
+import { extractDrumTimbreFeatures } from "./drumTimbre";
+import { classifyDrumTimbres } from "./drumTimbreCore";
 
 const ANALYSIS_SR = 44100;
-const LANES = 4;
 let essentiaInstance: any | null = null;
 
 function getEssentia() {
@@ -32,8 +33,6 @@ function transientFeatures(samples: Float32Array, sr: number, time: number) {
   let pre = 0;
   let post = 0;
   let peak = 0;
-  let zc = 0;
-  let prev = samples[center] ?? 0;
 
   const preStart = Math.max(0, center - preN);
   for (let i = preStart; i < center; i++) pre += samples[i] * samples[i];
@@ -44,16 +43,12 @@ function transientFeatures(samples: Float32Array, sr: number, time: number) {
     const x = samples[i];
     post += x * x;
     peak = Math.max(peak, Math.abs(x));
-    if ((x >= 0) !== (prev >= 0)) zc++;
-    prev = x;
   }
   const count = Math.max(1, postEnd - center);
   post = Math.sqrt(post / count);
 
   return {
     score: Math.max(0, post - pre) + peak * 0.18,
-    zcr: zc / count,
-    body: post,
     peak,
   };
 }
@@ -117,6 +112,9 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
     const scoreFloor = Math.max(0.0015, scoreMedian * 0.45);
     const gated = candidates.filter((x) => x.score >= scoreFloor && x.peak >= 0.01);
 
+    // Chunk 2B will replace this global de-duplication with multiband layered-hit
+    // recovery. Keep it unchanged in 2A so timbre classification is the only
+    // production variable being evaluated here.
     const deduped: typeof gated = [];
     const minGap = 0.055;
     for (const item of gated) {
@@ -129,26 +127,27 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
     }
     if (!deduped.length) return [];
 
-    const brightness = deduped.map((x) => x.zcr * 0.72 + (1 - Math.min(1, x.body * 4)) * 0.18 + x.peak * 0.10);
-    const sortedBrightness = [...brightness].sort((a, b) => a - b);
-    const laneFor = (value: number) => {
-      for (let lane = 0; lane < LANES - 1; lane++) {
-        const idx = Math.floor(((lane + 1) / LANES) * (sortedBrightness.length - 1));
-        if (value <= sortedBrightness[idx]) return lane;
-      }
-      return LANES - 1;
-    };
+    const prepared = deduped.map((item, index) => ({
+      ...item,
+      id: `sf-${index}-${Math.round(item.time * 1000)}`,
+    }));
 
-    const maxScore = Math.max(...deduped.map((x) => x.score), 1e-6);
+    // Classify acoustically similar transients together using the actual source
+    // spectrum. This replaces the old source-relative brightness quartiles, which
+    // could split four identical kicks into four different UI lanes.
+    const timbreFeatures = extractDrumTimbreFeatures(essentia, analysis, prepared);
+    const lanes = classifyDrumTimbres(timbreFeatures);
+
+    const maxScore = Math.max(...prepared.map((x) => x.score), 1e-6);
     const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 
-    return deduped.map((item, index) => ({
-      id: `sf-${index}-${Math.round(item.time * 1000)}`,
+    return prepared.map((item, index) => ({
+      id: item.id,
       time: item.time,
       // This is only a fallback musical position. The auto-kit path replaces it
       // with beat-tick interpolation. Never redefine beat zero from the first hit.
       beat: item.time * safeBpm / 60,
-      lane: laneFor(brightness[index]),
+      lane: lanes[index] ?? 2,
       velocity: Math.max(48, Math.min(127, Math.round(48 + 79 * Math.sqrt(item.score / maxScore)))),
     }));
   } finally {
