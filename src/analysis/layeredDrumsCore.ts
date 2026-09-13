@@ -29,12 +29,12 @@ function addLane(lanes: DrumLane[], lane: DrumLane) {
 }
 
 /**
- * Expand a full-band onset into one or more UI drum lanes using independent
+ * Expand one full-band transient into one or more UI drum lanes using independent
  * low/mid/high-band onset evidence plus the transient's full-band spectrum.
  *
- * The primary timbre classifier remains authoritative for the first lane. Extra
- * lanes require BOTH an onset in the corresponding frequency band and spectral
- * evidence strong enough to avoid turning one broadband snare into snare+hat.
+ * Evidence-backed lanes win over a weak mixed-spectrum primary label. The primary
+ * classifier remains the fallback when the multiband evidence cannot justify any
+ * canonical lane (for example, tonal percussion).
  */
 export function recoverLayeredDrumHits(
   candidates: LayeredDrumCandidate[],
@@ -47,38 +47,53 @@ export function recoverLayeredDrumHits(
 
   candidates.forEach((candidate, index) => {
     const primary = primaryLanes[index] ?? 2;
-    const lanes: DrumLane[] = [primary];
+    const lanes: DrumLane[] = [];
     const lowEvidence = hasNearbyOnset(candidate.time, bandOnsets.low, toleranceSeconds);
     const midEvidence = hasNearbyOnset(candidate.time, bandOnsets.mid, toleranceSeconds);
     const highEvidence = hasNearbyOnset(candidate.time, bandOnsets.high, toleranceSeconds);
     const upperEnergy = candidate.midHighRatio + candidate.highRatio;
 
-    // Layered kick evidence. A true low-band attack plus meaningful low energy is
-    // required; this keeps ordinary snares/toms from gaining phantom kicks.
+    // Kick-like layer: require both low-band onset evidence and meaningful low
+    // spectral mass. This lets a clicky kick survive even when rolloff/ZCR make
+    // its full-band spectrum ambiguous.
     if (
       lowEvidence &&
       candidate.lowRatio >= 0.16 &&
       candidate.lowRatio >= upperEnergy * 0.55
     ) addLane(lanes, 0);
 
-    // Layered hat/cymbal evidence. Snares are broadband and often trigger the
-    // high-band detector, so the high band must also carry a substantial share
-    // of the transient before a second HAT event is emitted.
+    // Hat/cymbal layer: highest-band energy must dominate the upper-mid body.
+    // This keeps a broadband snare from gaining a phantom hat while still
+    // recovering hats layered over kicks/snares where their absolute share is
+    // lower than in a solo hat.
     if (
       highEvidence &&
-      candidate.highRatio >= 0.24 &&
+      candidate.highRatio >= 0.12 &&
+      candidate.highRatio >= candidate.midHighRatio * 1.50 &&
       candidate.rolloffHz >= 5_500 &&
       candidate.zcr >= 0.07
     ) addLane(lanes, 3);
 
-    // Layered snare/clap evidence. Mid-band onset + noisy upper energy separates
-    // it from a low kick body or tonal midrange percussion.
+    // Snare/clap layer: require real mid-band body as well as noisy upper energy.
+    // A pure high-frequency hat can trigger a mid-band detector through filter
+    // leakage, but it has essentially no low-mid body and is therefore rejected.
     if (
       midEvidence &&
+      candidate.midLowRatio >= 0.12 &&
       upperEnergy >= 0.22 &&
       candidate.zcr >= 0.07 &&
       candidate.rolloffHz >= 1_800
     ) addLane(lanes, 1);
+
+    // If band evidence produced nothing, trust the 2A timbre classifier. When it
+    // did produce canonical lanes, retain a non-PERC primary only if it agrees
+    // with those observations. A mixed-spectrum PERC label is intentionally not
+    // piled on top of an evidence-backed kick/hat/snare combination.
+    if (!lanes.length) {
+      addLane(lanes, primary);
+    } else if (primary !== 2) {
+      addLane(lanes, primary);
+    }
 
     lanes.forEach((lane, laneIndex) => {
       output.push({
