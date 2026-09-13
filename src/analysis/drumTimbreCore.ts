@@ -104,9 +104,12 @@ function laneForCluster(cluster: Cluster, features: DrumTimbreFeatures[]): DrumL
     mean.rolloffHz < 5_000
   ) return 0;
 
-  // Hat/cymbal-like: high-frequency energy plus a high rolloff / crossing rate.
+  // Hat/cymbal-like: the *highest* band must dominate the upper-mid body, not
+  // merely be present. This prevents broad/noisy snares from being mislabeled
+  // as hats just because they also have high rolloff and lots of zero crossings.
   if (
     mean.highRatio >= Math.max(0.16, mean.lowRatio * 1.15) &&
+    mean.highRatio >= mean.midHighRatio * 1.25 &&
     mean.rolloffHz >= 5_500 &&
     mean.zcr >= 0.06
   ) return 3;
