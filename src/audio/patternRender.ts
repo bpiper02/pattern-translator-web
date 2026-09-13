@@ -83,9 +83,17 @@ export type PatternPlayback = {
   stop: () => void;
 };
 
-/** Play an already rendered pattern buffer without re-decoding or re-scheduling its hits. */
-export function playPatternBuffer(buffer: AudioBuffer, onEnded?: () => void): PatternPlayback {
-  const context = new AudioContext();
+/**
+ * Play an already rendered pattern buffer without re-decoding or re-scheduling
+ * its hits. Callers may create/resume the context synchronously on the click and
+ * pass it in after an async render, which avoids Safari/iOS autoplay rejection.
+ */
+export function playPatternBuffer(
+  buffer: AudioBuffer,
+  onEnded?: () => void,
+  playbackContext?: AudioContext,
+): PatternPlayback {
+  const context = playbackContext ?? new AudioContext();
   const source = context.createBufferSource();
   source.buffer = buffer;
   source.connect(context.destination);
