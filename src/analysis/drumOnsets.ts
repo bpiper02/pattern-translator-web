@@ -140,12 +140,14 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
     };
 
     const maxScore = Math.max(...deduped.map((x) => x.score), 1e-6);
-    const first = deduped[0].time;
+    const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 
     return deduped.map((item, index) => ({
       id: `sf-${index}-${Math.round(item.time * 1000)}`,
       time: item.time,
-      beat: (item.time - first) * bpm / 60,
+      // This is only a fallback musical position. The auto-kit path replaces it
+      // with beat-tick interpolation. Never redefine beat zero from the first hit.
+      beat: item.time * safeBpm / 60,
       lane: laneFor(brightness[index]),
       velocity: Math.max(48, Math.min(127, Math.round(48 + 79 * Math.sqrt(item.score / maxScore)))),
     }));
