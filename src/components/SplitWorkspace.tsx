@@ -4,6 +4,8 @@ import {
   splitDrumStem,
   splitFullMix,
   stemUrlToFile,
+  type DrumSplitProfile,
+  type FullSplitProfile,
   type SplitStem,
 } from "../separation/client";
 import {
@@ -33,8 +35,18 @@ function sourceKind(mode: SplitMode): AudioAssetKind {
   return mode === "full" ? "mix" : "drums";
 }
 
+function shortEngine(engine: string) {
+  if (engine.includes("MDX23C-DrumSep")) return "MDX23C DRUMSEP";
+  if (engine.includes("melband_roformer") && engine.includes("htdemucs")) return "MEL-ROFORMER → HTDEMUCS";
+  if (engine.includes("htdemucs_ft")) return engine.startsWith("fallback:") ? "HTDEMUCS FT FALLBACK" : "HTDEMUCS FT";
+  if (engine.includes("drumsep")) return engine.startsWith("fallback:") ? "RULE-BASED DRUMSEP FALLBACK" : "RULE-BASED DRUMSEP";
+  return engine.toUpperCase();
+}
+
 export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   const [mode, setMode] = useState<SplitMode>("full");
+  const [fullProfile, setFullProfile] = useState<FullSplitProfile>("balanced");
+  const [drumProfile, setDrumProfile] = useState<DrumSplitProfile>("hq");
   const [file, setFile] = useState<File | null>(null);
   const [sourceAssetId, setSourceAssetId] = useState<string | null>(null);
   const [drumsAssetId, setDrumsAssetId] = useState<string | null>(null);
@@ -44,6 +56,7 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   const [splittingDrums, setSplittingDrums] = useState(false);
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
   const [message, setMessage] = useState("DROP A FULL MIX OR DRUM STEM");
+  const [lastEngine, setLastEngine] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const drumsStem = useMemo(() => stems.find((stem) => stem.kind === "drums") ?? null, [stems]);
@@ -62,6 +75,7 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     setDrumsAssetId(null);
     setStems([]);
     setDrumSubstems([]);
+    setLastEngine(null);
     setMessage(next === "full" ? "DROP A FULL MIX OR CHOOSE ONE FROM THE BIN" : "DROP DRUM AUDIO OR CHOOSE IT FROM THE BIN");
   }
 
@@ -98,13 +112,18 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     setStems([]);
     setDrumSubstems([]);
     setDrumsAssetId(null);
-    setMessage(mode === "full" ? "SEPARATING FULL MIX…" : "SPLITTING DRUM AUDIO…");
+    setLastEngine(null);
+    setMessage(mode === "full"
+      ? fullProfile === "hq" ? "HQ REMIX SPLIT — ROFORMER VOCALS + DEMUCS INSTRUMENTS…" : "SEPARATING FULL MIX…"
+      : drumProfile === "hq" ? "HQ DRUM SPLIT — MDX23C…" : "SPLITTING DRUM AUDIO…");
 
     const sourceAsset = registerSource(nextFile, existingAsset);
     setSourceAssetId(sourceAsset.id);
 
     try {
-      const result = mode === "full" ? await splitFullMix(nextFile) : await splitDrumStem(nextFile);
+      const result = mode === "full"
+        ? await splitFullMix(nextFile, fullProfile)
+        : await splitDrumStem(nextFile, drumProfile);
       if (mode === "full") setStems(result.stems);
       else setDrumSubstems(result.stems);
 
@@ -112,7 +131,9 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
       const publishedDrums = published.find((asset) => asset.kind === "drums");
       if (publishedDrums) setDrumsAssetId(publishedDrums.id);
 
-      setMessage(`SPLIT READY — ${result.stems.length} STEMS ADDED TO PROJECT BIN`);
+      setLastEngine(shortEngine(result.engine));
+      const fallback = result.profile.includes("fallback") ? " // FALLBACK USED" : "";
+      setMessage(`SPLIT READY — ${result.stems.length} STEMS ADDED TO PROJECT BIN${fallback}`);
     } catch (error) {
       console.error(error);
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "SPLIT FAILED"}`);
@@ -125,14 +146,19 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     if (!drumsStem) return;
     stopAudio();
     setSplittingDrums(true);
-    setMessage("SPLITTING DRUMS → KICK / SNARE / HAT / CYMBALS / TOMS…");
+    setLastEngine(null);
+    setMessage(drumProfile === "hq"
+      ? "HQ DRUM SUB-SPLIT → MDX23C KICK / SNARE / HAT / CYMBALS / TOMS…"
+      : "SPLITTING DRUMS → KICK / SNARE / HAT / CYMBALS / TOMS…");
     try {
       const drumFile = await stemUrlToFile(drumsStem);
-      const result = await splitDrumStem(drumFile);
+      const result = await splitDrumStem(drumFile, drumProfile);
       setDrumSubstems(result.stems);
       const parentId = drumsAssetId ?? sourceAssetId;
       if (parentId) await publishStems(result.stems, parentId);
-      setMessage(`DRUM SUBSTEMS READY — ${result.stems.length} STEMS ADDED TO PROJECT BIN`);
+      setLastEngine(shortEngine(result.engine));
+      const fallback = result.profile.includes("fallback") ? " // FALLBACK USED" : "";
+      setMessage(`DRUM SUBSTEMS READY — ${result.stems.length} STEMS ADDED TO PROJECT BIN${fallback}`);
     } catch (error) {
       console.error(error);
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "DRUM SPLIT FAILED"}`);
@@ -197,6 +223,24 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
           <button className={mode === "drums" ? "active" : ""} onClick={() => chooseMode("drums")}>DRUM AUDIO</button>
         </div>
 
+        <div className="splitQualityRow">
+          {mode === "full" ? (
+            <>
+              <span>QUALITY</span>
+              <button className={fullProfile === "balanced" ? "utilityButton active" : "utilityButton"} disabled={busy} onClick={() => setFullProfile("balanced")}>BALANCED // HTDEMUCS</button>
+              <button className={fullProfile === "hq" ? "utilityButton active" : "utilityButton"} disabled={busy} onClick={() => setFullProfile("hq")}>HQ REMIX // ROFORMER + DEMUCS</button>
+              <small>HQ prioritizes cleaner vocals for sampling/remixing, then separates the instrumental remainder.</small>
+            </>
+          ) : (
+            <>
+              <span>QUALITY</span>
+              <button className={drumProfile === "standard" ? "utilityButton active" : "utilityButton"} disabled={busy || splittingDrums} onClick={() => setDrumProfile("standard")}>STANDARD // DSP</button>
+              <button className={drumProfile === "hq" ? "utilityButton active" : "utilityButton"} disabled={busy || splittingDrums} onClick={() => setDrumProfile("hq")}>HQ // MDX23C</button>
+              <small>HQ uses the neural DrumSep model; STANDARD remains the CPU-light deterministic fallback.</small>
+            </>
+          )}
+        </div>
+
         {assets.length > 0 && (
           <div className="splitBinSource">
             <span>USE MATERIAL FROM PROJECT BIN</span>
@@ -242,6 +286,7 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
         ) : (
           <div className="lcdStatus">{message}</div>
         )}
+        {lastEngine && <div className="splitEngineReadout">ENGINE // {lastEngine}</div>}
       </section>
 
       {renderStemRack("01 // BROAD STEMS", stems)}
@@ -250,7 +295,7 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
         <section className="module splitDrumAction">
           <div className="moduleTitle">02 // DRUM SUB-SPLIT</div>
           <div className="splitActionRow">
-            <div className="midiWarning">This uses the separated DRUMS stem as a new child asset, then splits it into instrument-specific material. The original song and broad stems remain untouched in the bin.</div>
+            <div className="midiWarning">This uses the separated DRUMS stem as a new child asset, then splits it into instrument-specific material. The original song and broad stems remain untouched in the bin. Current drum quality: {drumProfile === "hq" ? "HQ MDX23C" : "STANDARD DSP"}.</div>
             <button className="processButton" disabled={splittingDrums || busy} onClick={() => void splitDetectedDrums()}>
               <Scissors size={15} /> {splittingDrums ? "SPLITTING…" : "SPLIT DRUMS FURTHER"}
             </button>
