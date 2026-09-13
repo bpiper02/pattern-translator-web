@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import subprocess
 import uuid
 from pathlib import Path
@@ -11,6 +13,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from backend.job_storage import prune_job_directories
 from backend.separation_profiles import (
     classify_broad,
     classify_drum,
@@ -25,7 +28,10 @@ MODEL_ROOT = APP_ROOT / "data" / "models"
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 MODEL_ROOT.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Pattern Translator Splitter", version="0.2")
+JOB_TTL_SECONDS = max(0, int(os.getenv("PT_JOB_TTL_SECONDS", "86400")))
+MAX_JOB_DIRS = max(1, int(os.getenv("PT_MAX_JOB_DIRS", "30")))
+
+app = FastAPI(title="Pattern Translator Splitter", version="0.3")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -41,7 +47,10 @@ def safe_suffix(filename: str | None) -> str:
 
 
 def public_url(job_id: str, path: Path) -> str:
-    return f"http://127.0.0.1:8788/files/{job_id}/{path.name}"
+    # Keep API responses host-agnostic. The browser client resolves this against
+    # its configured splitter base URL, so localhost, LAN and hosted backends all
+    # use the same response contract.
+    return f"/files/{job_id}/{path.name}"
 
 
 def response_for(job_id: str, files: list[tuple[str, Path]], *, profile: str, engine: str) -> dict:
@@ -60,13 +69,26 @@ def response_for(job_id: str, files: list[tuple[str, Path]], *, profile: str, en
     }
 
 
+def prepare_job_dir(job_id: str) -> Path:
+    prune_job_directories(
+        DATA_ROOT,
+        ttl_seconds=JOB_TTL_SECONDS,
+        max_jobs=MAX_JOB_DIRS,
+    )
+    job_dir = DATA_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=False)
+    return job_dir
+
+
 async def save_upload(upload: UploadFile, job_dir: Path) -> Path:
+    job_dir.mkdir(parents=True, exist_ok=True)
     input_path = job_dir / f"input{safe_suffix(upload.filename)}"
     with input_path.open("wb") as target:
         while chunk := await upload.read(1024 * 1024):
             target.write(chunk)
     await upload.close()
     if input_path.stat().st_size == 0:
+        input_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded audio file was empty")
     return input_path
 
@@ -170,13 +192,20 @@ def run_rule_based_drums(input_path: Path, output_dir: Path) -> list[Path]:
         from drumsep import separate
     except ImportError as exc:
         raise RuntimeError("drumsep is not installed in the splitter environment") from exc
+    output_dir.mkdir(parents=True, exist_ok=True)
     separate(str(input_path), output_dir=str(output_dir), enhanced=True)
     return list(output_dir.rglob("*.wav"))
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "fullProfiles": ["balanced", "hq"], "drumProfiles": ["standard", "hq"]}
+    return {
+        "ok": True,
+        "fullProfiles": ["balanced", "hq"],
+        "drumProfiles": ["standard", "hq"],
+        "jobTtlSeconds": JOB_TTL_SECONDS,
+        "maxJobs": MAX_JOB_DIRS,
+    }
 
 
 @app.post("/split/full")
@@ -187,13 +216,14 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     job_id = uuid.uuid4().hex
-    job_dir = DATA_ROOT / job_id
+    job_dir = prepare_job_dir(job_id)
     input_path = await save_upload(file, job_dir)
 
     try:
         if selected.vocal_ensemble_preset or selected.vocal_model:
             if selected.vocal_ensemble_preset:
-                pair_paths = run_audio_separator(
+                pair_paths = await asyncio.to_thread(
+                    run_audio_separator,
                     input_path,
                     job_dir / "vocal_refine",
                     ensemble_preset=selected.vocal_ensemble_preset,
@@ -201,7 +231,8 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
                 )
                 vocal_engine = f"ensemble:{selected.vocal_ensemble_preset}"
             else:
-                pair_paths = run_audio_separator(
+                pair_paths = await asyncio.to_thread(
+                    run_audio_separator,
                     input_path,
                     job_dir / "vocal_refine",
                     model=selected.vocal_model,
@@ -211,7 +242,8 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
             pair = collect_pair(pair_paths)
             if "vocals" not in pair or "instrumental" not in pair:
                 raise RuntimeError("HQ vocal separator did not produce both vocals and instrumental")
-            broad_paths = run_audio_separator(
+            broad_paths = await asyncio.to_thread(
+                run_audio_separator,
                 pair["instrumental"],
                 job_dir / "broad",
                 model=selected.broad_model,
@@ -221,18 +253,26 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
             found["vocals"] = pair["vocals"]
             engine = f"{vocal_engine} -> {selected.broad_model}"
         else:
-            found = collect_broad(
-                run_audio_separator(input_path, job_dir / "broad", model=selected.broad_model)
+            broad_paths = await asyncio.to_thread(
+                run_audio_separator,
+                input_path,
+                job_dir / "broad",
+                model=selected.broad_model,
             )
+            found = collect_broad(broad_paths)
             engine = selected.broad_model
     except RuntimeError as exc:
         if profile != "hq":
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         fallback = full_mix_profile("balanced")
         try:
-            found = collect_broad(
-                run_audio_separator(input_path, job_dir / "broad_fallback", model=fallback.broad_model)
+            fallback_paths = await asyncio.to_thread(
+                run_audio_separator,
+                input_path,
+                job_dir / "broad_fallback",
+                model=fallback.broad_model,
             )
+            found = collect_broad(fallback_paths)
             engine = f"fallback:{fallback.broad_model}"
             profile = "balanced-fallback"
         except RuntimeError as fallback_exc:
@@ -252,29 +292,33 @@ async def split_drums(file: UploadFile = File(...), profile: str = "hq") -> dict
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     job_id = uuid.uuid4().hex
-    job_dir = DATA_ROOT / job_id
+    job_dir = prepare_job_dir(job_id)
     output_dir = job_dir / "drums"
-    output_dir.mkdir(parents=True, exist_ok=True)
     input_path = await save_upload(file, job_dir)
 
     engine = "drumsep"
     try:
         if selected.model:
-            paths = run_audio_separator(input_path, output_dir / "mdx23c", model=selected.model)
+            paths = await asyncio.to_thread(
+                run_audio_separator,
+                input_path,
+                output_dir / "mdx23c",
+                model=selected.model,
+            )
             engine = selected.model
         else:
-            paths = run_rule_based_drums(input_path, output_dir / "rule_based")
+            paths = await asyncio.to_thread(run_rule_based_drums, input_path, output_dir / "rule_based")
     except Exception as exc:
         if not selected.fallback_rule_based or not selected.model:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         try:
-            paths = run_rule_based_drums(input_path, output_dir / "fallback")
+            paths = await asyncio.to_thread(run_rule_based_drums, input_path, output_dir / "fallback")
             engine = "fallback:drumsep"
             profile = "standard-fallback"
         except Exception as fallback_exc:
             raise HTTPException(status_code=500, detail=str(fallback_exc)) from fallback_exc
 
-    found = collect_drum(paths, output_dir)
+    found = await asyncio.to_thread(collect_drum, paths, output_dir)
     ordered = [(kind, found[kind]) for kind in ("kick", "snare", "hihat", "cymbals", "toms") if kind in found]
     if not ordered:
         raise HTTPException(status_code=500, detail="Drum separator finished but no recognizable substems were produced")
