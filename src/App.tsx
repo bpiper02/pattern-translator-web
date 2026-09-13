@@ -9,6 +9,7 @@ import { StemEditor } from "./components/StemEditor";
 import { ResampleWorkspace } from "./components/ResampleWorkspace";
 import { SplitWorkspace } from "./components/SplitWorkspace";
 import { DraftNumberInput } from "./components/DraftNumberInput";
+import { VoiceMidiCapture } from "./components/VoiceMidiCapture";
 
 type Workspace = "translate" | "split" | "edit" | "resample";
 type Mode = "beat" | "drums" | "bass" | "melody";
@@ -298,6 +299,8 @@ export function App() {
               <button className={mode === "melody" ? "active" : ""} onClick={() => switchMode("melody")}><Music2 size={16} /> MELODY</button>
             </div>
           </section>
+
+          {mode === "melody" && <VoiceMidiCapture bpm={sourceBpm} />}
 
           <section className="module sourceModule">
             <div className="moduleTitle">02 // SOURCE AUDIO</div>
