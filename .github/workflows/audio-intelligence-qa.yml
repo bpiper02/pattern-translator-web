@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/audio-intelligence-overhaul
+      - spike/melody-transcription-bakeoff
   workflow_dispatch:
 
 jobs:
@@ -26,13 +27,24 @@ jobs:
         run: node qa/audio-intelligence-baseline.mjs
 
       - name: Compile audio intelligence modules for regression
-        run: npx tsc src/analysis/voiceRhythm.ts src/analysis/rhythmCapture.ts --outDir .qa-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+        run: npx tsc src/analysis/voiceRhythm.ts src/analysis/rhythmCapture.ts src/analysis/voiceMelodyCore.ts src/analysis/voiceMelody.ts --outDir .qa-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Voice rhythm regression
         run: node qa/voice-rhythm-regression.mjs
 
       - name: Rhythm capture grid regression
         run: node qa/rhythm-capture-grid.mjs
+
+      - name: Production voice melody regression
+        run: node qa/voice-melody-regression.mjs
+
+      - name: Corrected melody bakeoff v2
+        if: github.ref_name == 'spike/melody-transcription-bakeoff'
+        run: node qa/melody-bakeoff-v2.cjs
+
+      # Legacy YIN, pYIN, Melodia-v1 and Basic Pitch spike scripts remain in qa/
+      # for reproducibility only. Their old vibrato verdicts are not authoritative
+      # because the v1 oscillator changed frequency without integrating phase.
 
       - name: Build
         run: npm run build

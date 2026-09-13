@@ -1,4 +1,5 @@
 import type { DrumHit, BassNote } from "./audio";
+import type { VoiceMelodyNote } from "./analysis/voiceMelody";
 
 function strBytes(s: string) {
   return Array.from(new TextEncoder().encode(s));
@@ -55,14 +56,24 @@ export function drumsMidi(hits: DrumHit[], bpm: number) {
   return makeMidi(ev,bpm,"Pattern Translator Drums");
 }
 
-export function bassMidi(notes: BassNote[], bpm: number) {
+type PitchedNote = Pick<BassNote, "beat" | "durationBeats" | "midi" | "confidence">;
+
+function pitchedMidi(notes: PitchedNote[], bpm: number, trackName: string) {
   const ev: {tick:number; bytes:number[]}[] = [];
   for (const n of notes) {
-    const t = Math.round(n.beat * 480);
+    const t = Math.max(0, Math.round(n.beat * 480));
     const end = t + Math.max(40, Math.round(n.durationBeats * 480));
     const vel = Math.max(50, Math.min(115, Math.round(60 + n.confidence * 55)));
     ev.push({tick:t, bytes:[0x90,n.midi,vel]});
     ev.push({tick:end, bytes:[0x80,n.midi,0]});
   }
-  return makeMidi(ev,bpm,"Pattern Translator Bass");
+  return makeMidi(ev,bpm,trackName);
+}
+
+export function bassMidi(notes: BassNote[], bpm: number) {
+  return pitchedMidi(notes, bpm, "Pattern Translator Bass");
+}
+
+export function melodyMidi(notes: VoiceMelodyNote[], bpm: number) {
+  return pitchedMidi(notes, bpm, "Pattern Translator Voice Melody");
 }

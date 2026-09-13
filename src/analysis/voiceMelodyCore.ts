@@ -1,0 +1,201 @@
+export type VoiceMelodyNote = {
+  id: string;
+  start: number;
+  duration: number;
+  beat: number;
+  durationBeats: number;
+  midi: number;
+  confidence: number;
+};
+
+export type VoiceMelodyOptions = {
+  bpm?: number;
+  quantizeStepBeats?: number | null;
+  confidenceThreshold?: number;
+};
+
+export type VoiceMelodyPitchFrame = {
+  time: number;
+  hz: number;
+  midi: number;
+  confidence: number;
+};
+
+type PitchSegment = {
+  pitchMidi: number;
+  startTimeSeconds: number;
+  endTimeSeconds: number;
+  confidences: number[];
+};
+
+export const VOICE_MELODY_SAMPLE_RATE = 44_100;
+export const VOICE_MELODY_FRAME_SIZE = 2_048;
+export const VOICE_MELODY_HOP_SIZE = 128;
+export const VOICE_MELODY_CONFIDENCE_THRESHOLD = 0.001;
+
+export function resampleVoiceMelodySamples(
+  input: Float32Array,
+  sourceRate: number,
+  targetRate = VOICE_MELODY_SAMPLE_RATE,
+) {
+  if (!input.length) return input;
+  if (!Number.isFinite(sourceRate) || sourceRate <= 0) throw new Error("Invalid source sample rate");
+  if (!Number.isFinite(targetRate) || targetRate <= 0) throw new Error("Invalid target sample rate");
+  if (sourceRate === targetRate) return input;
+
+  const ratio = targetRate / sourceRate;
+  const output = new Float32Array(Math.max(1, Math.round(input.length * ratio)));
+  for (let i = 0; i < output.length; i++) {
+    const sourcePosition = i / ratio;
+    const left = Math.min(input.length - 1, Math.floor(sourcePosition));
+    const right = Math.min(left + 1, input.length - 1);
+    const fraction = sourcePosition - left;
+    output[i] = input[left] + (input[right] - input[left]) * fraction;
+  }
+  return output;
+}
+
+export function voiceMelodyHzToMidi(hz: number) {
+  return hz > 0 ? 69 + 12 * Math.log2(hz / 440) : Number.NaN;
+}
+
+function median(values: number[]) {
+  if (!values.length) return Number.NaN;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function quantize(value: number, step: number | null | undefined) {
+  if (!step || step <= 0) return value;
+  return Math.round(value / step) * step;
+}
+
+function framesToSegments(frames: VoiceMelodyPitchFrame[], confidenceThreshold: number) {
+  const hopSeconds = VOICE_MELODY_HOP_SIZE / VOICE_MELODY_SAMPLE_RATE;
+  const voiced = frames.map((frame) => ({
+    ...frame,
+    usableMidi:
+      frame.hz > 0 && Number.isFinite(frame.midi) && frame.confidence >= confidenceThreshold
+        ? frame.midi
+        : Number.NaN,
+  }));
+
+  // Five-frame median smoothing removes isolated harmonic/octave glitches while
+  // staying much shorter than the shortest accepted note (60 ms).
+  const smoothed = voiced.map((frame, index) => {
+    if (!Number.isFinite(frame.usableMidi)) return { ...frame, smoothedMidi: Number.NaN };
+    const values: number[] = [];
+    for (let offset = Math.max(0, index - 2); offset <= Math.min(voiced.length - 1, index + 2); offset++) {
+      if (Number.isFinite(voiced[offset].usableMidi)) values.push(voiced[offset].usableMidi);
+    }
+    return { ...frame, smoothedMidi: median(values) };
+  });
+
+  const raw: PitchSegment[] = [];
+  let active: PitchSegment | null = null;
+
+  for (const frame of smoothed) {
+    const midi = Number.isFinite(frame.smoothedMidi) ? Math.round(frame.smoothedMidi) : null;
+    if (midi == null) {
+      if (active) raw.push(active);
+      active = null;
+      continue;
+    }
+
+    if (!active || midi !== active.pitchMidi) {
+      if (active) raw.push(active);
+      active = {
+        pitchMidi: midi,
+        startTimeSeconds: Math.max(0, frame.time - hopSeconds / 2),
+        endTimeSeconds: frame.time + hopSeconds / 2,
+        confidences: [frame.confidence],
+      };
+    } else {
+      active.endTimeSeconds = frame.time + hopSeconds / 2;
+      active.confidences.push(frame.confidence);
+    }
+  }
+  if (active) raw.push(active);
+
+  // Collapse only a tiny pitch excursion surrounded by the same note. Real
+  // pitch changes and silence-separated re-articulations remain distinct.
+  const repaired: PitchSegment[] = [];
+  for (let index = 0; index < raw.length; index++) {
+    const segment = raw[index];
+    const duration = segment.endTimeSeconds - segment.startTimeSeconds;
+    const previous = repaired[repaired.length - 1];
+    const next = raw[index + 1];
+    if (
+      duration <= Math.max(0.05, hopSeconds * 5) &&
+      previous &&
+      next &&
+      previous.pitchMidi === next.pitchMidi
+    ) {
+      previous.endTimeSeconds = next.endTimeSeconds;
+      previous.confidences.push(...segment.confidences, ...next.confidences);
+      index++;
+      continue;
+    }
+    repaired.push({ ...segment, confidences: [...segment.confidences] });
+  }
+
+  const minDuration = Math.max(0.06, hopSeconds * 3);
+  const compact = repaired
+    .map((segment) => ({
+      pitchMidi: Math.max(0, Math.min(127, segment.pitchMidi)),
+      startTimeSeconds: segment.startTimeSeconds,
+      durationSeconds: Math.max(0, segment.endTimeSeconds - segment.startTimeSeconds),
+      confidence:
+        segment.confidences.reduce((sum, value) => sum + value, 0) /
+        Math.max(1, segment.confidences.length),
+    }))
+    .filter((note) => note.durationSeconds >= minDuration);
+
+  // Bridge only very small tracking dropouts. A ~60 ms silence still creates a
+  // separate repeated note instead of being swallowed into one long note.
+  const merged: typeof compact = [];
+  for (const note of compact) {
+    const previous = merged[merged.length - 1];
+    if (previous && previous.pitchMidi === note.pitchMidi) {
+      const previousEnd = previous.startTimeSeconds + previous.durationSeconds;
+      const gap = note.startTimeSeconds - previousEnd;
+      if (gap >= 0 && gap <= Math.max(0.03, hopSeconds * 2.5)) {
+        previous.durationSeconds = note.startTimeSeconds + note.durationSeconds - previous.startTimeSeconds;
+        previous.confidence = Math.max(previous.confidence, note.confidence);
+        continue;
+      }
+    }
+    merged.push({ ...note });
+  }
+
+  return merged;
+}
+
+export function voiceMelodyFramesToNotes(
+  frames: VoiceMelodyPitchFrame[],
+  options: VoiceMelodyOptions = {},
+): VoiceMelodyNote[] {
+  if (!frames.length) return [];
+  const bpm = Number.isFinite(options.bpm) && (options.bpm ?? 0) > 0 ? options.bpm! : 120;
+  const confidenceThreshold = Math.max(
+    0,
+    options.confidenceThreshold ?? VOICE_MELODY_CONFIDENCE_THRESHOLD,
+  );
+  const segments = framesToSegments(frames, confidenceThreshold);
+
+  return segments.map((note, index) => {
+    const rawBeat = note.startTimeSeconds * bpm / 60;
+    const rawDurationBeats = note.durationSeconds * bpm / 60;
+    const beat = quantize(rawBeat, options.quantizeStepBeats);
+    const endBeat = quantize(rawBeat + rawDurationBeats, options.quantizeStepBeats);
+    return {
+      id: `vm-${index}-${Math.round(note.startTimeSeconds * 1000)}`,
+      start: note.startTimeSeconds,
+      duration: note.durationSeconds,
+      beat,
+      durationBeats: Math.max(0.0625, endBeat - beat),
+      midi: note.pitchMidi,
+      confidence: note.confidence,
+    };
+  });
+}
