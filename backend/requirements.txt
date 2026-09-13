@@ -3,3 +3,5 @@ uvicorn[standard]>=0.35,<1
 python-multipart>=0.0.20,<1
 audio-separator[cpu]>=0.40,<1
 drumsep>=0.1,<1
+numpy>=1.26,<3
+soundfile>=0.12,<1
