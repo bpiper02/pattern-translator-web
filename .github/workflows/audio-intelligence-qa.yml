@@ -6,6 +6,7 @@ on:
       - feat/audio-intelligence-overhaul
       - feat/beat-pattern-accuracy
       - feat/beat-timbre-accuracy
+      - feat/layered-drum-hits
       - spike/melody-transcription-bakeoff
   workflow_dispatch:
 
@@ -41,24 +42,32 @@ jobs:
         run: node qa/voice-melody-regression.mjs
 
       - name: Compile beat-grid core for regression
-        if: startsWith(github.ref_name, 'feat/beat-')
+        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits'
         run: npx tsc src/analysis/drumGrid.ts --outDir .qa-beat-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum grid alignment regression
-        if: startsWith(github.ref_name, 'feat/beat-')
+        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits'
         run: node qa/drum-grid-alignment.mjs
 
       - name: Compile drum timbre core for regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits'
         run: npx tsc src/analysis/drumTimbreCore.ts --outDir .qa-timbre-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum timbre clustering regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits'
         run: node qa/drum-timbre-core.mjs
 
       - name: Drum timbre Essentia regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits'
         run: node qa/drum-timbre-essentia.mjs
+
+      - name: Compile layered drum core for regression
+        if: github.ref_name == 'feat/layered-drum-hits'
+        run: npx tsc src/analysis/drumTimbreCore.ts src/analysis/layeredDrumsCore.ts --outDir .qa-layer-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+
+      - name: Layered drum core regression
+        if: github.ref_name == 'feat/layered-drum-hits'
+        run: node qa/layered-drums-core.mjs
 
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
