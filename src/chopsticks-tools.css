@@ -1,0 +1,134 @@
+/* Shared Chopsticks tool surfaces. Functional layout remains in the legacy tool sheets. */
+
+.splitModeTabs{gap:5px!important;margin:8px 0 10px!important;padding:4px;background:#0c0c0e;border:1px solid #29292d;border-radius:5px}
+.splitModeTabs button{
+  flex:1;
+  border:1px solid #343439!important;
+  border-radius:3px;
+  background:linear-gradient(#232327,#171719)!important;
+  color:#aaa4a0!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.04)!important;
+  padding:9px 12px!important;
+}
+.splitModeTabs button.active{background:linear-gradient(#ad1c15,#68100c)!important;border-color:#d54138!important;color:#fff!important;box-shadow:inset 0 1px #f15b52!important}
+
+.splitQualityRow,.splitBinSource{
+  background:#101012!important;
+  border:1px solid #323237!important;
+  border-radius:5px;
+  padding:9px!important;
+  box-shadow:none!important;
+}
+.splitQualityRow>span,.splitBinSource>span{color:#b9b3ae!important}
+.splitQualityRow .utilityButton.active,.splitBinChoices .utilityButton.active{outline:1px solid #d54138!important;outline-offset:1px;color:#fff!important;background:#27100f!important}
+.splitBinChoices{gap:5px!important;scrollbar-color:#4a2623 #111113}
+
+.splitDrop{
+  min-height:128px!important;
+  background:linear-gradient(145deg,#121214,#0b0b0d)!important;
+  border:1px dashed #4d3533!important;
+  border-radius:6px;
+  color:#dcd6d0!important;
+  box-shadow:inset 0 0 35px #0006!important;
+  transition:border-color .14s ease,background .14s ease;
+}
+.splitDrop:hover{border-color:#a92a24!important;background:#180d0e!important}
+.splitDrop span{color:#77716e!important}
+.splitEngineReadout{
+  background:#120908!important;
+  border:1px solid #47211e!important;
+  border-radius:4px;
+  color:#cf645c!important;
+  box-shadow:inset 0 0 12px #000!important;
+}
+
+.splitRack{
+  margin-top:0!important;
+  background:linear-gradient(180deg,#18181b,#121214)!important;
+  border:1px solid #35353a!important;
+  border-radius:7px;
+  box-shadow:inset 0 1px rgba(255,255,255,.03)!important;
+  padding:12px!important;
+}
+.splitRackTitle{color:#aaa49f!important;text-shadow:none!important;letter-spacing:.13em!important;margin-bottom:9px!important}
+.splitStemGrid{gap:8px!important}
+.splitStemCard{
+  align-items:center!important;
+  background:#0e0e10!important;
+  border:1px solid #303035!important;
+  border-left:3px solid #51201d!important;
+  border-radius:5px;
+  padding:8px!important;
+  box-shadow:none!important;
+}
+.splitStemCard:hover{border-color:#4c3432!important;border-left-color:#c62a22!important}
+.splitStemReadout{
+  background:#130908!important;
+  border:1px solid #3d2321!important;
+  border-radius:3px;
+  color:#ff796f!important;
+  box-shadow:inset 0 0 12px #000!important;
+}
+.splitStemReadout span{color:#96504a!important}
+.splitStemCard .utilityButton,.splitStemCard .abPlayButton{height:36px!important}
+
+.editorMasterControls{gap:7px!important;margin-bottom:9px!important}
+.editorMasterControls label{
+  background:#101012!important;
+  border:1px solid #333338!important;
+  border-radius:5px;
+  padding:8px!important;
+}
+.editorMasterControls span,.stemSlider span,.stemPitch span{color:#8f8985!important;letter-spacing:.06em}
+.stemRows{gap:7px!important}
+.stemRow{
+  background:#101012!important;
+  border:1px solid #333338!important;
+  border-left:3px solid #3e2422!important;
+  border-radius:5px;
+  padding:8px!important;
+  box-shadow:none!important;
+}
+.stemRow:hover{border-left-color:#a52a24!important}
+.stemName b{color:#f5eee8!important;font-size:11px!important}
+.stemName span{color:#77716e!important}
+.stemSlider input{accent-color:#d92920}
+.stemPitch.passive{background:#0c0c0e!important;border:1px solid #302b2b!important;border-radius:3px!important}
+.stemPitch.passive b{color:#b9b3ae!important}
+.stemUploadButton,.stemToggle{border-radius:4px!important}
+.stemToggle.active{background:linear-gradient(#a91b15,#65100c)!important;border-color:#cd3d35!important;color:#fff!important}
+.stemEditorFooter{padding-top:2px}
+
+.voiceMidiSetup{gap:7px!important}
+.voiceMidiSetup .voiceNote{border-radius:4px}
+.patternModule:has(.voiceMidiSetup){border-color:#432925!important}
+.patternModule:has(.voiceMidiSetup) .resultPanel{margin-top:8px}
+
+.abDeck{border-radius:5px!important;padding:8px!important}
+.abLabel{color:#8b8581!important}
+.abPlayButton.rebuilt{background:linear-gradient(#962019,#59100c)!important;border-color:#c83c33!important;color:#fff!important}
+.fileReadout b{color:#ff8177!important}
+
+.translateGrid{gap:7px!important}
+.digitalControl,.keyControl{border-radius:5px!important;padding:9px!important}
+.digitalControl span,.keyControl span{color:#8f8985!important;letter-spacing:.07em}
+.digitalControl input,.keyControl select{font-size:23px!important}
+.keyControl select{font-size:18px!important}
+.actionRail{gap:7px!important;margin-top:9px!important}
+.resultPanel{border-radius:5px!important}
+.resultPanel b{color:#f4eee8!important}
+.resultPanel span{color:#827c78!important}
+
+.vintageProgress{background:#101012!important;border:1px solid #323237!important;border-radius:4px;box-shadow:none!important}
+.vintageProgress>span{color:#aaa49f!important}
+
+.utilityButton,.processButton,.exportButton,.abPlayButton,.stemToggle,.stemUploadButton,.recordButton,.laneAudition{
+  min-height:34px;
+  justify-content:center;
+  letter-spacing:.02em;
+}
+
+@media(max-width:760px){
+  .splitQualityRow{padding:8px!important}
+  .splitStemCard{padding:7px!important}
+}
