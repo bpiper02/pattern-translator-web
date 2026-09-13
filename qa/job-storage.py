@@ -32,6 +32,11 @@ with tempfile.TemporaryDirectory() as temp:
     second = prune_job_directories(root, ttl_seconds=50, max_jobs=2, now=100)
     assert second == [], second
 
+    # Zero capacity is useful immediately before creating the one allowed job.
+    zero = prune_job_directories(root, ttl_seconds=50, max_jobs=0, now=100)
+    assert sorted(zero) == ["middle", "new"], zero
+    assert not any(path.is_dir() for path in root.iterdir())
+
     try:
         prune_job_directories(root, ttl_seconds=-1, max_jobs=2, now=100)
     except ValueError:
@@ -40,10 +45,10 @@ with tempfile.TemporaryDirectory() as temp:
         raise AssertionError("negative TTL should fail")
 
     try:
-        prune_job_directories(root, ttl_seconds=50, max_jobs=0, now=100)
+        prune_job_directories(root, ttl_seconds=50, max_jobs=-1, now=100)
     except ValueError:
         pass
     else:
-        raise AssertionError("max_jobs=0 should fail")
+        raise AssertionError("negative max_jobs should fail")
 
 print("JOB STORAGE REGRESSION: PASS")
