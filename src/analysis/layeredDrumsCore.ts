@@ -6,12 +6,12 @@ export type LayeredDrumCandidate = DrumTimbreFeatures & {
   velocity: number;
 };
 
-export type LayeredDrumHit = {
-  id: string;
+export type LayeredDrumHit = DrumTimbreFeatures & {
   time: number;
   beat: number;
   lane: DrumLane;
   velocity: number;
+  sourceEventId: string;
 };
 
 export type LayerBandOnsets = {
@@ -53,19 +53,12 @@ export function recoverLayeredDrumHits(
     const highEvidence = hasNearbyOnset(candidate.time, bandOnsets.high, toleranceSeconds);
     const upperEnergy = candidate.midHighRatio + candidate.highRatio;
 
-    // Kick-like layer: require both low-band onset evidence and meaningful low
-    // spectral mass. This lets a clicky kick survive even when rolloff/ZCR make
-    // its full-band spectrum ambiguous.
     if (
       lowEvidence &&
       candidate.lowRatio >= 0.16 &&
       candidate.lowRatio >= upperEnergy * 0.55
     ) addLane(lanes, 0);
 
-    // Hat/cymbal layer: highest-band energy must dominate the upper-mid body.
-    // This keeps a broadband snare from gaining a phantom hat while still
-    // recovering hats layered over kicks/snares where their absolute share is
-    // lower than in a solo hat.
     if (
       highEvidence &&
       candidate.highRatio >= 0.12 &&
@@ -74,9 +67,6 @@ export function recoverLayeredDrumHits(
       candidate.zcr >= 0.07
     ) addLane(lanes, 3);
 
-    // Snare/clap layer: require real mid-band body as well as noisy upper energy.
-    // A pure high-frequency hat can trigger a mid-band detector through filter
-    // leakage, but it has essentially no low-mid body and is therefore rejected.
     if (
       midEvidence &&
       candidate.midLowRatio >= 0.12 &&
@@ -85,10 +75,6 @@ export function recoverLayeredDrumHits(
       candidate.rolloffHz >= 1_800
     ) addLane(lanes, 1);
 
-    // If band evidence produced nothing, trust the 2A timbre classifier. When it
-    // did produce canonical lanes, retain a non-PERC primary only if it agrees
-    // with those observations. A mixed-spectrum PERC label is intentionally not
-    // piled on top of an evidence-backed kick/hat/snare combination.
     if (!lanes.length) {
       addLane(lanes, primary);
     } else if (primary !== 2) {
@@ -97,9 +83,9 @@ export function recoverLayeredDrumHits(
 
     lanes.forEach((lane, laneIndex) => {
       output.push({
+        ...candidate,
         id: `${candidate.id}-layer-${lane}-${laneIndex}`,
-        time: candidate.time,
-        beat: candidate.beat,
+        sourceEventId: candidate.id,
         lane,
         velocity: lane === primary ? candidate.velocity : Math.max(48, Math.round(candidate.velocity * 0.92)),
       });
