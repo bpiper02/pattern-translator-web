@@ -47,9 +47,6 @@ def safe_suffix(filename: str | None) -> str:
 
 
 def public_url(job_id: str, path: Path) -> str:
-    # Keep API responses host-agnostic. The browser client resolves this against
-    # its configured splitter base URL, so localhost, LAN and hosted backends all
-    # use the same response contract.
     return f"/files/{job_id}/{path.name}"
 
 
@@ -70,10 +67,12 @@ def response_for(job_id: str, files: list[tuple[str, Path]], *, profile: str, en
 
 
 def prepare_job_dir(job_id: str) -> Path:
+    # Reserve one slot for the job we are about to create so the configured cap
+    # is exact even immediately after creation.
     prune_job_directories(
         DATA_ROOT,
         ttl_seconds=JOB_TTL_SECONDS,
-        max_jobs=MAX_JOB_DIRS,
+        max_jobs=max(0, MAX_JOB_DIRS - 1),
     )
     job_dir = DATA_ROOT / job_id
     job_dir.mkdir(parents=True, exist_ok=False)
