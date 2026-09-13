@@ -1,9 +1,31 @@
-import { secondsToBeatPosition } from "./rhythm";
-
 export type TimedHit = {
   time: number;
   beat: number;
 };
+
+function secondsToBeatPosition(timeSeconds: number, beats: number[]) {
+  if (beats.length < 2) return 0;
+
+  if (timeSeconds <= beats[0]) {
+    const beatLength = beats[1] - beats[0];
+    return beatLength > 0 ? (timeSeconds - beats[0]) / beatLength : 0;
+  }
+
+  for (let i = 0; i < beats.length - 1; i++) {
+    const start = beats[i];
+    const end = beats[i + 1];
+    if (timeSeconds >= start && timeSeconds < end) {
+      const beatLength = end - start;
+      return beatLength > 0 ? i + (timeSeconds - start) / beatLength : i;
+    }
+  }
+
+  const last = beats.length - 1;
+  const beatLength = beats[last] - beats[last - 1];
+  return beatLength > 0
+    ? last + (timeSeconds - beats[last]) / beatLength
+    : last;
+}
 
 /**
  * Map absolute onset times onto musical beat positions.
