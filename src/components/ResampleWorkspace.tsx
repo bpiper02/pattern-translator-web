@@ -14,6 +14,7 @@ import {
 } from "../audio/patternRender";
 import { drumsMidi } from "../midi";
 import type { ProjectAudioAsset } from "../project/assets";
+import { createOperationGate } from "../state/operationGate";
 import { DraftNumberInput } from "./DraftNumberInput";
 
 const STEPS = 16;
@@ -47,6 +48,10 @@ function blankSourcePattern(): SourcePattern {
   };
 }
 
+function blankLaneLoadGeneration(): Record<LaneName, number> {
+  return { KICK: 0, SNARE: 0, HAT: 0, PERC: 0 };
+}
+
 function directLaneForAsset(asset: ProjectAudioAsset): LaneName | null {
   if (asset.kind === "kick") return "KICK";
   if (asset.kind === "snare") return "SNARE";
@@ -62,6 +67,10 @@ function downloadBlob(blob: Blob, name: string) {
   anchor.download = name;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function abortError() {
+  return new DOMException("Operation cancelled", "AbortError");
 }
 
 export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps) {
@@ -86,6 +95,9 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   const renderTicketRef = useRef(0);
   const voiceCaptureAbortRef = useRef<AbortController | null>(null);
   const routedAssetRef = useRef<string | null>(null);
+  const extractGateRef = useRef(createOperationGate());
+  const laneLoadGenerationRef = useRef<Record<LaneName, number>>(blankLaneLoadGeneration());
+  const mountedRef = useRef(true);
 
   function stopPatternPlayback() {
     patternPlaybackRef.current?.stop();
@@ -98,7 +110,14 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     setPlayingMode(null);
   }
 
+  function invalidateLaneLoads() {
+    for (const lane of LANES) laneLoadGenerationRef.current[lane] += 1;
+  }
+
   useEffect(() => () => {
+    mountedRef.current = false;
+    extractGateRef.current.invalidate();
+    invalidateLaneLoads();
     renderTicketRef.current++;
     patternPlaybackRef.current?.stop();
     auditionPlaybackRef.current?.stop();
@@ -107,7 +126,11 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   }, []);
 
   useEffect(() => {
-    if (!routedAsset || routedAssetRef.current === routedAsset.id) return;
+    if (!routedAsset) {
+      routedAssetRef.current = null;
+      return;
+    }
+    if (routedAssetRef.current === routedAsset.id) return;
     routedAssetRef.current = routedAsset.id;
     const directLane = directLaneForAsset(routedAsset);
     if (directLane) {
@@ -131,49 +154,71 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     setMessage(next);
   }
 
-  async function installSample(name: LaneName, file: File, buffer: AudioBuffer) {
-    setLanes((current) => current.map((lane) => lane.name === name ? { ...lane, file, buffer } : lane));
-  }
-
   async function loadSample(name: LaneName, file: File) {
+    extractGateRef.current.invalidate();
+    setExtracting(false);
+    const generation = ++laneLoadGenerationRef.current[name];
     try {
       const buffer = await decodeAudio(file);
-      await installSample(name, file, buffer);
+      if (!mountedRef.current || generation !== laneLoadGenerationRef.current[name]) return;
+      setLanes((current) => current.map((lane) => lane.name === name ? { ...lane, file, buffer } : lane));
       invalidate(`${name} SAMPLE READY — CLICK STEPS OR USE VOICE INPUT`);
     } catch (error) {
+      if (!mountedRef.current || generation !== laneLoadGenerationRef.current[name]) return;
       console.error(error);
       setMessage(`ERROR — COULD NOT LOAD ${name}`);
     }
   }
 
   async function extractStem(file: File) {
+    const token = extractGateRef.current.begin();
+    invalidateLaneLoads();
     renderTicketRef.current++;
     stopPatternPlayback();
+    auditionPlaybackRef.current?.stop();
     setSourceStem(file);
     setExtracting(true);
     setRendered(null);
+    setSourcePattern(blankSourcePattern());
+    // A whole-source extraction owns the auto kit. Clear old source samples now
+    // so a lane missing from the new source can never leak in from the old kit.
+    setLanes((current) => current.map((lane) => ({ ...blankLane(lane.name), steps: [...lane.steps] })));
     setMessage("ANALYZING SOURCE + EXTRACTING KIT…");
     try {
       const buffer = await decodeAudio(file);
+      if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
       const result = extractAutoDrumKit(buffer, bpm);
+      if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
       const entries = Object.entries(result.lanes) as [AutoKitLane, AudioBuffer][];
       if (!entries.length) throw new Error("No clean transient samples found");
 
+      const extracted = new Map<LaneName, { file: File; buffer: AudioBuffer }>();
       for (const [name, sampleBuffer] of entries) {
         const blob = audioBufferToWav(sampleBuffer);
-        const sampleFile = new File([blob], `${name.toLowerCase()}-auto.wav`, { type: "audio/wav" });
-        await installSample(name, sampleFile, sampleBuffer);
+        extracted.set(name, {
+          file: new File([blob], `${name.toLowerCase()}-auto.wav`, { type: "audio/wav" }),
+          buffer: sampleBuffer,
+        });
       }
+      if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
 
+      setLanes((current) => current.map((lane) => {
+        const sample = extracted.get(lane.name);
+        return sample
+          ? { ...lane, file: sample.file, buffer: sample.buffer }
+          : blankLane(lane.name);
+      }));
       setSourcePattern(result.sourcePattern as SourcePattern);
       const detail = LANES.map((name) => `${name}:${result.counts[name]}`).join("  ");
       setMessage(`AUTO KIT + SOURCE GRID READY — ${result.totalOnsets} ONSETS // ${detail}`);
     } catch (error) {
+      if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
       console.error(error);
+      setLanes(LANES.map(blankLane));
       setSourcePattern(blankSourcePattern());
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "KIT EXTRACTION FAILED"}`);
     } finally {
-      setExtracting(false);
+      if (mountedRef.current && extractGateRef.current.isCurrent(token)) setExtracting(false);
     }
   }
 
@@ -341,12 +386,15 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
           }
         },
       });
+      if (controller.signal.aborted) throw abortError();
 
       const voiceFile = new File([blob], "voice-pattern.webm", { type: blob.type });
       const voiceBuffer = await decodeAudio(voiceFile);
+      if (controller.signal.aborted) throw abortError();
       const mono = monoSamples(voiceBuffer);
       const onsets = detectVoiceRhythmOnsets(mono, voiceBuffer.sampleRate);
       const activeSteps = new Set(quantizeRhythmCapture(onsets, { bpm: captureBpm, steps: STEPS }));
+      if (controller.signal.aborted) throw abortError();
       setLanes((current) => current.map((lane) => lane.name === voiceLane ? {
         ...lane,
         steps: lane.steps.map((value, step) => value || activeSteps.has(step)),
@@ -354,15 +402,17 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
       invalidate(`VOICE → ${voiceLane} PATTERN — ${activeSteps.size} STEPS CAPTURED`);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        setMessage("VOICE CAPTURE CANCELLED");
-      } else {
+        if (mountedRef.current) setMessage("VOICE CAPTURE CANCELLED");
+      } else if (mountedRef.current) {
         console.error(error);
         setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "COULD NOT ANALYZE VOICE INPUT"}`);
       }
     } finally {
-      setRecording(false);
-      setCountIn(null);
-      setProcessingVoice(false);
+      if (mountedRef.current) {
+        setRecording(false);
+        setCountIn(null);
+        setProcessingVoice(false);
+      }
       if (voiceCaptureAbortRef.current === controller) voiceCaptureAbortRef.current = null;
     }
   }
@@ -384,7 +434,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
           </div>
           <label className="processButton autoKitButton">
             <Scissors size={15} /> {extracting ? "EXTRACTING…" : sourceStem ? "RE-EXTRACT KIT" : "LOAD AUDIO"}
-            <input type="file" accept="audio/*" hidden disabled={extracting} onChange={(event) => { const nextFile = event.target.files?.[0]; if (nextFile) void extractStem(nextFile); event.currentTarget.value = ""; }} />
+            <input type="file" accept="audio/*" hidden disabled={extracting} onChange={(event) => { const nextFile = event.target.files?.[0]; event.currentTarget.value = ""; if (nextFile) void extractStem(nextFile); }} />
           </label>
         </div>
 
@@ -395,7 +445,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
             <div className="sampleSlot" key={lane.name}>
               <b>{lane.name}</b>
               <span>{lane.file?.name ?? "NOT FOUND / NO SAMPLE"}</span>
-              <label className="stemUploadButton"><Upload size={13} /> {lane.buffer ? "REPLACE" : "LOAD MANUALLY"}<input type="file" accept="audio/*" hidden onChange={(event) => { const nextFile = event.target.files?.[0]; if (nextFile) void loadSample(lane.name, nextFile); event.currentTarget.value = ""; }} /></label>
+              <label className="stemUploadButton"><Upload size={13} /> {lane.buffer ? "REPLACE" : "LOAD MANUALLY"}<input type="file" accept="audio/*" hidden onChange={(event) => { const nextFile = event.target.files?.[0]; event.currentTarget.value = ""; if (nextFile) void loadSample(lane.name, nextFile); }} /></label>
               <button className="utilityButton" disabled={!lane.buffer} onClick={() => audition(lane.name)}><Play size={12} /> HIT</button>
             </div>
           ))}
