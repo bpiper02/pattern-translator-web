@@ -13,6 +13,7 @@ import {
   type PatternPlayback,
 } from "../audio/patternRender";
 import { drumsMidi } from "../midi";
+import type { ProjectAudioAsset } from "../project/assets";
 import { DraftNumberInput } from "./DraftNumberInput";
 
 const STEPS = 16;
@@ -29,6 +30,10 @@ type LaneState = {
 
 type SourcePattern = Record<LaneName, boolean[]>;
 
+type ResampleWorkspaceProps = {
+  routedAsset?: ProjectAudioAsset | null;
+};
+
 function blankLane(name: LaneName): LaneState {
   return { name, file: null, buffer: null, steps: Array(STEPS).fill(false) };
 }
@@ -42,6 +47,14 @@ function blankSourcePattern(): SourcePattern {
   };
 }
 
+function directLaneForAsset(asset: ProjectAudioAsset): LaneName | null {
+  if (asset.kind === "kick") return "KICK";
+  if (asset.kind === "snare") return "SNARE";
+  if (asset.kind === "hihat" || asset.kind === "cymbals") return "HAT";
+  if (asset.kind === "toms") return "PERC";
+  return null;
+}
+
 function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -51,7 +64,7 @@ function downloadBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
-export function ResampleWorkspace() {
+export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps) {
   const [lanes, setLanes] = useState<LaneState[]>(() => LANES.map(blankLane));
   const [sourcePattern, setSourcePattern] = useState<SourcePattern>(() => blankSourcePattern());
   const [bpm, setBpm] = useState(100);
@@ -72,6 +85,7 @@ export function ResampleWorkspace() {
   const playheadTimerRef = useRef<number | null>(null);
   const renderTicketRef = useRef(0);
   const voiceCaptureAbortRef = useRef<AbortController | null>(null);
+  const routedAssetRef = useRef<string | null>(null);
 
   function stopPatternPlayback() {
     patternPlaybackRef.current?.stop();
@@ -91,6 +105,17 @@ export function ResampleWorkspace() {
     if (playheadTimerRef.current !== null) window.clearInterval(playheadTimerRef.current);
     voiceCaptureAbortRef.current?.abort();
   }, []);
+
+  useEffect(() => {
+    if (!routedAsset || routedAssetRef.current === routedAsset.id) return;
+    routedAssetRef.current = routedAsset.id;
+    const directLane = directLaneForAsset(routedAsset);
+    if (directLane) {
+      void loadSample(directLane, routedAsset.file);
+      return;
+    }
+    void extractStem(routedAsset.file);
+  }, [routedAsset]);
 
   const loadedCount = useMemo(() => lanes.filter((lane) => lane.buffer).length, [lanes]);
   const hasSourcePattern = useMemo(
@@ -127,12 +152,12 @@ export function ResampleWorkspace() {
     setSourceStem(file);
     setExtracting(true);
     setRendered(null);
-    setMessage("ANALYZING DRUM STEM + EXTRACTING KIT…");
+    setMessage("ANALYZING SOURCE + EXTRACTING KIT…");
     try {
       const buffer = await decodeAudio(file);
       const result = extractAutoDrumKit(buffer, bpm);
       const entries = Object.entries(result.lanes) as [AutoKitLane, AudioBuffer][];
-      if (!entries.length) throw new Error("No clean drum hits found");
+      if (!entries.length) throw new Error("No clean transient samples found");
 
       for (const [name, sampleBuffer] of entries) {
         const blob = audioBufferToWav(sampleBuffer);
@@ -156,8 +181,6 @@ export function ResampleWorkspace() {
     const lane = lanes.find((item) => item.name === name);
     if (!lane?.buffer) return;
     auditionPlaybackRef.current?.stop();
-    // Audition the exact in-memory sample buffer used by preview/export. No URL
-    // round-trip or second decoder is involved.
     auditionPlaybackRef.current = playPatternSample(lane.buffer);
   }
 
@@ -211,8 +234,6 @@ export function ResampleWorkspace() {
 
     stopPatternPlayback();
     const ticket = ++renderTicketRef.current;
-    // Create/resume synchronously from the button gesture before awaiting the
-    // offline render. This is important for Safari/iOS autoplay policies.
     const playbackContext = new AudioContext();
     void playbackContext.resume();
     setRendering(true);
@@ -222,8 +243,6 @@ export function ResampleWorkspace() {
       const renderLanes = mode === "source"
         ? lanes.map((lane) => ({ ...lane, steps: [...sourcePattern[lane.name]] }))
         : lanes;
-      // If BUILD WAV already created the current working render, preview that exact
-      // object. Otherwise the working preview render becomes the export object.
       const output = mode === "working" && rendered
         ? rendered
         : await renderPatternBuffer(renderLanes, bpm, 4);
@@ -323,10 +342,10 @@ export function ResampleWorkspace() {
         },
       });
 
-      const file = new File([blob], "voice-pattern.webm", { type: blob.type });
-      const buffer = await decodeAudio(file);
-      const mono = monoSamples(buffer);
-      const onsets = detectVoiceRhythmOnsets(mono, buffer.sampleRate);
+      const voiceFile = new File([blob], "voice-pattern.webm", { type: blob.type });
+      const voiceBuffer = await decodeAudio(voiceFile);
+      const mono = monoSamples(voiceBuffer);
+      const onsets = detectVoiceRhythmOnsets(mono, voiceBuffer.sampleRate);
       const activeSteps = new Set(quantizeRhythmCapture(onsets, { bpm: captureBpm, steps: STEPS }));
       setLanes((current) => current.map((lane) => lane.name === voiceLane ? {
         ...lane,
@@ -356,16 +375,16 @@ export function ResampleWorkspace() {
     <section className="resampleWorkspace">
       <section className="module">
         <div className="moduleTitle">01 // SOURCE → AUTO SOUND KIT</div>
-        <div className="resampleIntro">Drop one clean DRUM STEM. Pattern Translator extracts a kit and maps the first detected bar onto the grid as faint SOURCE markers. You can audition, copy and edit that pattern below.</div>
+        <div className="resampleIntro">Drop audio or send material from the PROJECT BIN. Broad material is analyzed for reusable transient samples; separated kick/snare/hat/tom assets load directly into their matching pad.</div>
 
         <div className="autoKitSource">
           <div className="autoKitReadout">
-            <b>{sourceStem?.name ?? "NO DRUM STEM LOADED"}</b>
-            <span>{sourceStem ? "AUTO-EXTRACTION + SOURCE GRID READY AFTER ANALYSIS" : "WAV / MP3 / M4A DRUM STEM"}</span>
+            <b>{sourceStem?.name ?? "NO SOURCE LOADED"}</b>
+            <span>{sourceStem ? "AUTO-EXTRACTION + SOURCE GRID READY AFTER ANALYSIS" : "WAV / MP3 / M4A AUDIO"}</span>
           </div>
           <label className="processButton autoKitButton">
-            <Scissors size={15} /> {extracting ? "EXTRACTING…" : sourceStem ? "RE-EXTRACT KIT" : "LOAD DRUM STEM"}
-            <input type="file" accept="audio/*" hidden disabled={extracting} onChange={(event) => { const file = event.target.files?.[0]; if (file) void extractStem(file); event.currentTarget.value = ""; }} />
+            <Scissors size={15} /> {extracting ? "EXTRACTING…" : sourceStem ? "RE-EXTRACT KIT" : "LOAD AUDIO"}
+            <input type="file" accept="audio/*" hidden disabled={extracting} onChange={(event) => { const nextFile = event.target.files?.[0]; if (nextFile) void extractStem(nextFile); event.currentTarget.value = ""; }} />
           </label>
         </div>
 
@@ -376,7 +395,7 @@ export function ResampleWorkspace() {
             <div className="sampleSlot" key={lane.name}>
               <b>{lane.name}</b>
               <span>{lane.file?.name ?? "NOT FOUND / NO SAMPLE"}</span>
-              <label className="stemUploadButton"><Upload size={13} /> {lane.buffer ? "REPLACE" : "LOAD MANUALLY"}<input type="file" accept="audio/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadSample(lane.name, file); event.currentTarget.value = ""; }} /></label>
+              <label className="stemUploadButton"><Upload size={13} /> {lane.buffer ? "REPLACE" : "LOAD MANUALLY"}<input type="file" accept="audio/*" hidden onChange={(event) => { const nextFile = event.target.files?.[0]; if (nextFile) void loadSample(lane.name, nextFile); event.currentTarget.value = ""; }} /></label>
               <button className="utilityButton" disabled={!lane.buffer} onClick={() => audition(lane.name)}><Play size={12} /> HIT</button>
             </div>
           ))}
@@ -449,7 +468,7 @@ export function ResampleWorkspace() {
           <button className="exportButton primaryExport" disabled={!rendered || rendering} onClick={exportWav}><Download size={14} /> EXPORT WAV</button>
           <button className="exportButton" disabled={rendering} onClick={exportMidi}>EXPORT MIDI</button>
         </div>
-        <div className="midiWarning">WORKING PREVIEW and WAV export now use the same rendered AudioBuffer. If they sound different, the bug is downstream of pattern rendering rather than the sequencer. SOURCE markers still depend on the BPM shown above; correct BPM and re-extract if the grid is shifted.</div>
+        <div className="midiWarning">WORKING PREVIEW and WAV export use the same rendered AudioBuffer. SOURCE markers still depend on the BPM shown above; correct BPM and re-extract if the grid is shifted.</div>
       </section>
     </section>
   );
