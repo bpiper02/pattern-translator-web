@@ -96,6 +96,7 @@ def benchmark_full(truth_dir: Path, work: Path) -> None:
             mix_path,
             work / "hq-vocals",
             ensemble_preset=hq.vocal_ensemble_preset,
+            custom_output_names={"Vocals": "vocals", "Instrumental": "instrumental"},
         )
     )
     if "vocals" not in pair or "instrumental" not in pair:
