@@ -20,7 +20,7 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 }
 
-function featureVector(feature: DrumTimbreFeatures) {
+export function drumTimbreVector(feature: DrumTimbreFeatures) {
   // Essentia's FlatnessDB output is documented as a flatness measure and in the
   // current extractor is observed in a compact ~0..1 range for these transient
   // windows. Keep it as a secondary similarity cue, not a hard drum-type rule.
@@ -50,6 +50,10 @@ function distance(a: number[], b: number[]) {
     const delta = value - b[index];
     return sum + delta * delta;
   }, 0));
+}
+
+export function drumTimbreDistance(a: DrumTimbreFeatures, b: DrumTimbreFeatures) {
+  return distance(drumTimbreVector(a), drumTimbreVector(b));
 }
 
 function mergeClosest(clusters: Cluster[], vectors: number[][]) {
@@ -140,7 +144,7 @@ export function classifyDrumTimbres(
   mergeThreshold = 0.34,
 ): DrumLane[] {
   if (!features.length) return [];
-  const vectors = features.map(featureVector);
+  const vectors = features.map(drumTimbreVector);
   let clusters: Cluster[] = vectors.map((vector, index) => ({ members: [index], vector }));
 
   while (clusters.length > 1) {
