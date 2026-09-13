@@ -11,6 +11,7 @@ import { SplitWorkspace } from "./components/SplitWorkspace";
 import { DraftNumberInput } from "./components/DraftNumberInput";
 import { AssetBin } from "./components/AssetBin";
 import { VoiceMidiCapture } from "./components/VoiceMidiCapture";
+import { createOperationGate } from "./state/operationGate";
 import {
   addProjectAsset,
   removeProjectAsset,
@@ -123,6 +124,7 @@ export function App() {
   const audioUrlRef = useRef<string | null>(null);
   const translatedPlaybackRef = useRef<DrumPlayback | null>(null);
   const assetsRef = useRef<ProjectAudioAsset[]>([]);
+  const operationGateRef = useRef(createOperationGate());
 
   const tonalMode = mode !== "drums";
   const pitchShift = tonalMode ? semitoneDistance(sourceRoot, targetRoot) : drumPitchShift;
@@ -164,7 +166,13 @@ export function App() {
     setRatio(0);
   }
 
+  function cancelWorkspaceOperation() {
+    operationGateRef.current.invalidate();
+    setBusy(false);
+  }
+
   function invalidateTranslation(nextMessage = "TARGET CHANGED — TRANSLATE AGAIN") {
+    cancelWorkspaceOperation();
     translatedPlaybackRef.current?.stop();
     translatedPlaybackRef.current = null;
     setPlayingTranslated(false);
@@ -173,7 +181,12 @@ export function App() {
   }
 
   async function ingest(nextFile: File) {
+    const token = operationGateRef.current.begin();
     stopPlayback();
+    setFile(null);
+    setBuffer(null);
+    setSamples(null);
+    setRhythm(null);
     setTranslatedBuffer(null);
     setBusy(true);
     setMessage("DECODING + DETECTING BPM…");
@@ -181,6 +194,7 @@ export function App() {
       const decoded = await decodeAudio(nextFile);
       const mono = monoSamples(decoded);
       const rhythmResult = analyzeRhythm(mono, decoded.sampleRate);
+      if (!operationGateRef.current.isCurrent(token)) return;
       const detectedBpm = Math.round(rhythmResult.bpm * 10) / 10;
       setFile(nextFile);
       setBuffer(decoded);
@@ -190,16 +204,18 @@ export function App() {
       setTargetBpm(detectedBpm);
       setMessage(`READY — ${detectedBpm} BPM DETECTED`);
     } catch (error) {
+      if (!operationGateRef.current.isCurrent(token)) return;
       console.error(error);
       setMessage("ERROR — COULD NOT READ AUDIO");
     } finally {
-      setBusy(false);
+      if (operationGateRef.current.isCurrent(token)) setBusy(false);
     }
   }
 
   function sendAsset(asset: ProjectAudioAsset, destination: AssetDestination) {
     stopPlayback();
     if (destination === "resample") {
+      cancelWorkspaceOperation();
       setRoutedResampleAsset(asset);
       setWorkspace("resample");
       return;
@@ -210,31 +226,40 @@ export function App() {
       void ingest(asset.file);
       return;
     }
+    cancelWorkspaceOperation();
     setWorkspace("split");
   }
 
   async function translate() {
     if (!buffer) return;
+    const token = operationGateRef.current.begin();
+    const inputBuffer = buffer;
+    const inputSourceBpm = sourceBpm;
+    const inputTargetBpm = targetBpm;
+    const inputPitchShift = pitchShift;
     stopPlayback();
     setBusy(true);
     setMessage("TRANSFORMING ORIGINAL AUDIO…");
     try {
-      const bpmUnchanged = Math.abs(targetBpm - sourceBpm) < 0.001;
-      const pitchUnchanged = pitchShift === 0;
+      const bpmUnchanged = Math.abs(inputTargetBpm - inputSourceBpm) < 0.001;
+      const pitchUnchanged = inputPitchShift === 0;
       if (bpmUnchanged && pitchUnchanged) {
-        setTranslatedBuffer(buffer);
+        if (!operationGateRef.current.isCurrent(token)) return;
+        setTranslatedBuffer(inputBuffer);
         setMessage("TRANSLATED READY — SOURCE SETTINGS UNCHANGED");
         return;
       }
-      const transformed = await transformAudio({ input: buffer, sourceBpm, targetBpm, semitones: pitchShift });
+      const transformed = await transformAudio({ input: inputBuffer, sourceBpm: inputSourceBpm, targetBpm: inputTargetBpm, semitones: inputPitchShift });
+      if (!operationGateRef.current.isCurrent(token)) return;
       setTranslatedBuffer(transformed);
-      const pitchText = pitchShift === 0 ? "PITCH UNCHANGED" : `${pitchShift > 0 ? "+" : ""}${pitchShift} SEMITONES`;
-      setMessage(`TRANSLATED READY — ${targetBpm} BPM // ${pitchText}`);
+      const pitchText = inputPitchShift === 0 ? "PITCH UNCHANGED" : `${inputPitchShift > 0 ? "+" : ""}${inputPitchShift} SEMITONES`;
+      setMessage(`TRANSLATED READY — ${inputTargetBpm} BPM // ${pitchText}`);
     } catch (error) {
+      if (!operationGateRef.current.isCurrent(token)) return;
       console.error(error);
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "TRANSLATION FAILED"}`);
     } finally {
-      setBusy(false);
+      if (operationGateRef.current.isCurrent(token)) setBusy(false);
     }
   }
 
@@ -289,7 +314,9 @@ export function App() {
   }
 
   function replaceFile() {
+    cancelWorkspaceOperation();
     stopPlayback();
+    if (inputRef.current) inputRef.current.value = "";
     setFile(null);
     setBuffer(null);
     setSamples(null);
@@ -299,6 +326,8 @@ export function App() {
   }
 
   function switchMode(next: Mode) {
+    if (next === mode) return;
+    cancelWorkspaceOperation();
     stopPlayback();
     setMode(next);
     setTranslatedBuffer(null);
@@ -307,6 +336,7 @@ export function App() {
 
   function switchWorkspace(next: Workspace) {
     if (next === workspace) return;
+    if (workspace === "translate") cancelWorkspaceOperation();
     stopPlayback();
     setWorkspace(next);
   }
@@ -349,10 +379,10 @@ export function App() {
           <section className="module modeModule">
             <div className="moduleTitle">01 // TRANSLATE MODE</div>
             <div className="modeButtons">
-              <button className={mode === "beat" ? "active" : ""} onClick={() => switchMode("beat")}><SlidersHorizontal size={16} /> FULL BEAT</button>
-              <button className={mode === "drums" ? "active" : ""} onClick={() => switchMode("drums")}><Drum size={16} /> DRUMS</button>
-              <button className={mode === "bass" ? "active" : ""} onClick={() => switchMode("bass")}><Music2 size={16} /> BASS</button>
-              <button className={mode === "melody" ? "active" : ""} onClick={() => switchMode("melody")}><Music2 size={16} /> MELODY</button>
+              <button disabled={busy} className={mode === "beat" ? "active" : ""} onClick={() => switchMode("beat")}><SlidersHorizontal size={16} /> FULL BEAT</button>
+              <button disabled={busy} className={mode === "drums" ? "active" : ""} onClick={() => switchMode("drums")}><Drum size={16} /> DRUMS</button>
+              <button disabled={busy} className={mode === "bass" ? "active" : ""} onClick={() => switchMode("bass")}><Music2 size={16} /> BASS</button>
+              <button disabled={busy} className={mode === "melody" ? "active" : ""} onClick={() => switchMode("melody")}><Music2 size={16} /> MELODY</button>
             </div>
           </section>
 
@@ -362,7 +392,7 @@ export function App() {
             <div className="moduleTitle">02 // SOURCE AUDIO</div>
             {!file ? (
               <div className={`dropZone ${drag ? "drag" : ""}`} onDragOver={(event) => { event.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(event) => { event.preventDefault(); setDrag(false); const next = event.dataTransfer.files[0]; if (next) void ingest(next); }} onClick={() => inputRef.current?.click()}>
-                <input ref={inputRef} type="file" accept="audio/*" hidden onChange={(event) => { const next = event.target.files?.[0]; if (next) void ingest(next); }} />
+                <input ref={inputRef} type="file" accept="audio/*" hidden onChange={(event) => { const next = event.target.files?.[0]; event.currentTarget.value = ""; if (next) void ingest(next); }} />
                 <Upload size={22} />
                 <b>DROP {mode === "beat" ? "FULL BEAT" : mode.toUpperCase()}</b>
                 <span>WAV / MP3 / M4A — AUDIO STAYS LOCAL</span>
@@ -383,20 +413,20 @@ export function App() {
           <section className="module translateModule">
             <div className="moduleTitle">03 // SET TARGET</div>
             <div className="translateGrid">
-              <label className="digitalControl"><span>SOURCE BPM</span><DraftNumberInput value={sourceBpm} min={20} max={300} step={0.1} onCommit={(value) => { setSourceBpm(value); invalidateTranslation("SOURCE BPM CHANGED — TRANSLATE AGAIN"); }} ariaLabel="Source BPM" /></label>
+              <label className="digitalControl"><span>SOURCE BPM</span><DraftNumberInput disabled={busy} value={sourceBpm} min={20} max={300} step={0.1} onCommit={(value) => { setSourceBpm(value); invalidateTranslation("SOURCE BPM CHANGED — TRANSLATE AGAIN"); }} ariaLabel="Source BPM" /></label>
               <div className="flowArrow">▶</div>
-              <label className="digitalControl targetControl"><span>TARGET BPM</span><DraftNumberInput value={targetBpm} min={20} max={300} step={0.1} onCommit={(value) => { setTargetBpm(value); invalidateTranslation(); }} ariaLabel="Target BPM" /></label>
+              <label className="digitalControl targetControl"><span>TARGET BPM</span><DraftNumberInput disabled={busy} value={targetBpm} min={20} max={300} step={0.1} onCommit={(value) => { setTargetBpm(value); invalidateTranslation(); }} ariaLabel="Target BPM" /></label>
               {tonalMode ? (
                 <>
-                  <label className="keyControl"><span>SOURCE KEY</span><select value={sourceRoot} onChange={(event) => { setSourceRoot(event.target.value); invalidateTranslation("SOURCE KEY CHANGED — TRANSLATE AGAIN"); }}>{ROOTS.map((root) => <option key={root}>{root}</option>)}</select></label>
+                  <label className="keyControl"><span>SOURCE KEY</span><select disabled={busy} value={sourceRoot} onChange={(event) => { setSourceRoot(event.target.value); invalidateTranslation("SOURCE KEY CHANGED — TRANSLATE AGAIN"); }}>{ROOTS.map((root) => <option key={root}>{root}</option>)}</select></label>
                   <div className="flowArrow">▶</div>
-                  <label className="keyControl targetControl"><span>TARGET KEY</span><select value={targetRoot} onChange={(event) => { setTargetRoot(event.target.value); invalidateTranslation(); }}>{ROOTS.map((root) => <option key={root}>{root}</option>)}</select></label>
+                  <label className="keyControl targetControl"><span>TARGET KEY</span><select disabled={busy} value={targetRoot} onChange={(event) => { setTargetRoot(event.target.value); invalidateTranslation(); }}>{ROOTS.map((root) => <option key={root}>{root}</option>)}</select></label>
                 </>
               ) : (
                 <>
                   <div className="keyControl passiveControl"><span>SOURCE PITCH</span><b>ORIGINAL</b></div>
                   <div className="flowArrow">▶</div>
-                  <label className="keyControl targetControl"><span>DRUM PITCH SHIFT</span><select value={drumPitchShift} onChange={(event) => { setDrumPitchShift(+event.target.value); invalidateTranslation(); }}>{SEMITONES.map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} semitones</option>)}</select></label>
+                  <label className="keyControl targetControl"><span>DRUM PITCH SHIFT</span><select disabled={busy} value={drumPitchShift} onChange={(event) => { setDrumPitchShift(+event.target.value); invalidateTranslation(); }}>{SEMITONES.map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value} semitones</option>)}</select></label>
                 </>
               )}
             </div>
