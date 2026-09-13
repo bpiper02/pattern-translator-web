@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { melodyMidi } from "../.qa-dist/midi.js";
+import { melodyMidi } from "../.qa-midi-dist/midi.js";
 
 const notes = [
   { id: "vm-0", start: 0, duration: 0.5, beat: 0, durationBeats: 1, midi: 60, confidence: 0.95 },
