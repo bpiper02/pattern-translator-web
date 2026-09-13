@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -52,3 +53,37 @@ def drum_profile(name: str) -> DrumProfile:
     if name not in DRUM_PROFILES:
         raise ValueError(f"Unknown drum profile: {name}")
     return DRUM_PROFILES[name]
+
+
+def classify_broad(path: Path) -> str | None:
+    name = path.stem.lower()
+    for kind in ("drums", "bass", "vocals", "other"):
+        if kind in name:
+            return kind
+    return None
+
+
+def classify_pair(path: Path) -> str | None:
+    name = path.stem.lower()
+    if "instrumental" in name or "no_vocals" in name or "no vocals" in name:
+        return "instrumental"
+    if "vocals" in name or "vocal" in name:
+        return "vocals"
+    return None
+
+
+def classify_drum(path: Path) -> str | None:
+    name = path.stem.lower().replace("-", "_")
+    aliases = {
+        "kick": ("kick", "bd"),
+        "snare": ("snare", "sd"),
+        "hihat": ("hihat", "hi_hat", "hh"),
+        "ride": ("ride",),
+        "crash": ("crash",),
+        "cymbals": ("cymbal", "cymbals"),
+        "toms": ("tom", "toms"),
+    }
+    for kind, tokens in aliases.items():
+        if any(token in name for token in tokens):
+            return kind
+    return None
