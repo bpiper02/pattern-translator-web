@@ -1,11 +1,14 @@
-import { Trash2 } from "lucide-react";
+import { ArrowRight, Trash2 } from "lucide-react";
 import { assetKindLabel, type ProjectAudioAsset } from "../project/assets";
 import "../assetBin.css";
+
+type AssetDestination = "split" | "resample" | "translate";
 
 type AssetBinProps = {
   assets: ProjectAudioAsset[];
   onRemove: (id: string) => void;
   onClear: () => void;
+  onSend: (asset: ProjectAudioAsset, destination: AssetDestination) => void;
 };
 
 function formatBytes(bytes: number) {
@@ -14,7 +17,11 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function AssetBin({ assets, onRemove, onClear }: AssetBinProps) {
+function canSplit(asset: ProjectAudioAsset) {
+  return ["mix", "drums", "other", "translated", "render"].includes(asset.kind);
+}
+
+export function AssetBin({ assets, onRemove, onClear, onSend }: AssetBinProps) {
   return (
     <section className="assetBin module" aria-label="Project asset bin">
       <div className="assetBinHeader">
@@ -39,6 +46,11 @@ export function AssetBin({ assets, onRemove, onClear }: AssetBinProps) {
               </div>
               <b title={asset.file.name}>{asset.label || asset.file.name}</b>
               <span className="assetMeta">{formatBytes(asset.file.size)} // {asset.parentId ? "DERIVED" : "SOURCE"}</span>
+              <div className="assetSendRow">
+                <button onClick={() => onSend(asset, "resample")}><ArrowRight size={10} /> RESAMPLE</button>
+                <button onClick={() => onSend(asset, "translate")}><ArrowRight size={10} /> TRANSLATE</button>
+                {canSplit(asset) && <button onClick={() => onSend(asset, "split")}><ArrowRight size={10} /> SPLIT</button>}
+              </div>
               <button className="assetRemove" aria-label={`Remove ${asset.label}`} onClick={() => onRemove(asset.id)}>
                 <Trash2 size={12} /> REMOVE
               </button>
