@@ -27,10 +27,7 @@ MODEL_ROOT.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="Pattern Translator Splitter", version="0.2")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -48,27 +45,15 @@ def public_url(job_id: str, path: Path) -> str:
 
 def response_for(job_id: str, files: list[tuple[str, Path]], *, profile: str, engine: str) -> dict:
     labels = {
-        "drums": "DRUMS",
-        "bass": "BASS",
-        "vocals": "VOCALS",
-        "other": "OTHER",
-        "kick": "KICK",
-        "snare": "SNARE",
-        "hihat": "HI-HAT",
-        "cymbals": "CYMBALS",
-        "toms": "TOMS",
+        "drums": "DRUMS", "bass": "BASS", "vocals": "VOCALS", "other": "OTHER",
+        "kick": "KICK", "snare": "SNARE", "hihat": "HI-HAT", "cymbals": "CYMBALS", "toms": "TOMS",
     }
     return {
         "jobId": job_id,
         "profile": profile,
         "engine": engine,
         "stems": [
-            {
-                "kind": kind,
-                "label": labels[kind],
-                "url": public_url(job_id, path),
-                "fileName": path.name,
-            }
+            {"kind": kind, "label": labels[kind], "url": public_url(job_id, path), "fileName": path.name}
             for kind, path in files
         ],
     }
@@ -85,20 +70,27 @@ async def save_upload(upload: UploadFile, job_dir: Path) -> Path:
     return input_path
 
 
-def run_audio_separator(input_path: Path, output_dir: Path, model: str) -> list[Path]:
+def run_audio_separator(
+    input_path: Path,
+    output_dir: Path,
+    *,
+    model: str | None = None,
+    ensemble_preset: str | None = None,
+) -> list[Path]:
+    if bool(model) == bool(ensemble_preset):
+        raise RuntimeError("Specify exactly one separator model or ensemble preset")
     output_dir.mkdir(parents=True, exist_ok=True)
     command = [
-        "audio-separator",
-        str(input_path),
-        "--model_filename",
-        model,
-        "--output_format",
-        "WAV",
-        "--output_dir",
-        str(output_dir),
-        "--model_file_dir",
-        str(MODEL_ROOT),
+        "audio-separator", str(input_path),
+        "--output_format", "WAV",
+        "--output_dir", str(output_dir),
+        "--model_file_dir", str(MODEL_ROOT),
+        "--use_soundfile",
     ]
+    if ensemble_preset:
+        command.extend(["--ensemble_preset", ensemble_preset])
+    else:
+        command.extend(["--model_filename", model or ""])
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
@@ -180,11 +172,7 @@ def run_rule_based_drums(input_path: Path, output_dir: Path) -> list[Path]:
 
 @app.get("/health")
 def health() -> dict:
-    return {
-        "ok": True,
-        "fullProfiles": ["balanced", "hq"],
-        "drumProfiles": ["standard", "hq"],
-    }
+    return {"ok": True, "fullProfiles": ["balanced", "hq"], "drumProfiles": ["standard", "hq"]}
 
 
 @app.post("/split/full")
@@ -199,25 +187,46 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
     input_path = await save_upload(file, job_dir)
 
     try:
-        if selected.vocal_model:
-            pair_paths = run_audio_separator(input_path, job_dir / "vocal_refine", selected.vocal_model)
+        if selected.vocal_ensemble_preset or selected.vocal_model:
+            if selected.vocal_ensemble_preset:
+                pair_paths = run_audio_separator(
+                    input_path,
+                    job_dir / "vocal_refine",
+                    ensemble_preset=selected.vocal_ensemble_preset,
+                )
+                vocal_engine = f"ensemble:{selected.vocal_ensemble_preset}"
+            else:
+                pair_paths = run_audio_separator(
+                    input_path,
+                    job_dir / "vocal_refine",
+                    model=selected.vocal_model,
+                )
+                vocal_engine = selected.vocal_model or "unknown"
             pair = collect_pair(pair_paths)
             if "vocals" not in pair or "instrumental" not in pair:
                 raise RuntimeError("HQ vocal separator did not produce both vocals and instrumental")
-            broad_paths = run_audio_separator(pair["instrumental"], job_dir / "broad", selected.broad_model)
+            broad_paths = run_audio_separator(
+                pair["instrumental"],
+                job_dir / "broad",
+                model=selected.broad_model,
+            )
             broad = collect_broad(broad_paths)
             found = {kind: path for kind, path in broad.items() if kind in {"drums", "bass", "other"}}
             found["vocals"] = pair["vocals"]
-            engine = f"{selected.vocal_model} -> {selected.broad_model}"
+            engine = f"{vocal_engine} -> {selected.broad_model}"
         else:
-            found = collect_broad(run_audio_separator(input_path, job_dir / "broad", selected.broad_model))
+            found = collect_broad(
+                run_audio_separator(input_path, job_dir / "broad", model=selected.broad_model)
+            )
             engine = selected.broad_model
     except RuntimeError as exc:
         if profile != "hq":
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         fallback = full_mix_profile("balanced")
         try:
-            found = collect_broad(run_audio_separator(input_path, job_dir / "broad_fallback", fallback.broad_model))
+            found = collect_broad(
+                run_audio_separator(input_path, job_dir / "broad_fallback", model=fallback.broad_model)
+            )
             engine = f"fallback:{fallback.broad_model}"
             profile = "balanced-fallback"
         except RuntimeError as fallback_exc:
@@ -245,7 +254,7 @@ async def split_drums(file: UploadFile = File(...), profile: str = "hq") -> dict
     engine = "drumsep"
     try:
         if selected.model:
-            paths = run_audio_separator(input_path, output_dir / "mdx23c", selected.model)
+            paths = run_audio_separator(input_path, output_dir / "mdx23c", model=selected.model)
             engine = selected.model
         else:
             paths = run_rule_based_drums(input_path, output_dir / "rule_based")
@@ -270,7 +279,6 @@ async def split_drums(file: UploadFile = File(...), profile: str = "hq") -> dict
 def serve_file(job_id: str, file_name: str) -> FileResponse:
     if not job_id.isalnum() or Path(file_name).name != file_name:
         raise HTTPException(status_code=400, detail="Invalid file path")
-
     job_dir = DATA_ROOT / job_id
     matches = list(job_dir.rglob(file_name))
     if not matches:
