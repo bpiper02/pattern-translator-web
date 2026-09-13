@@ -4,6 +4,7 @@ import { monoSamples } from "../audio";
 import { detectVoiceMelody, type VoiceMelodyNote } from "../analysis/voiceMelody";
 import { recordOneBarRhythm as recordOneBarVoice, type RhythmCapturePhase } from "../audio/captureRhythm";
 import { melodyMidi } from "../midi";
+import { DraftNumberInput } from "./DraftNumberInput";
 
 type VoiceMidiCaptureProps = {
   bpm: number;
@@ -20,6 +21,10 @@ function pitchName(midi: number) {
 
 function midiToHz(midi: number) {
   return 440 * 2 ** ((midi - 69) / 12);
+}
+
+function validTempo(value: number) {
+  return Number.isFinite(value) && value > 0 ? Math.max(40, Math.min(240, value)) : 120;
 }
 
 function downloadBlob(blob: Blob, name: string) {
@@ -66,11 +71,14 @@ export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
   const [state, setState] = useState<CaptureState>("idle");
   const [message, setMessage] = useState("READY — ONE-BAR VOICE CAPTURE");
   const [notes, setNotes] = useState<VoiceMelodyNote[]>([]);
-  const [capturedBpm, setCapturedBpm] = useState(bpm);
+  const [captureTempo, setCaptureTempo] = useState(() => validTempo(bpm));
+  const [capturedBpm, setCapturedBpm] = useState(() => validTempo(bpm));
   const [previewing, setPreviewing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const previewContextRef = useRef<AudioContext | null>(null);
   const previewTimerRef = useRef<number | null>(null);
+
+  const active = state === "count-in" || state === "recording" || state === "processing";
 
   function stopPreview() {
     if (previewTimerRef.current != null) {
@@ -83,14 +91,16 @@ export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
     setPreviewing(false);
   }
 
+  useEffect(() => {
+    if (!active && !notes.length) setCaptureTempo(validTempo(bpm));
+  }, [bpm, active, notes.length]);
+
   useEffect(() => () => {
     abortRef.current?.abort();
     if (previewTimerRef.current != null) window.clearTimeout(previewTimerRef.current);
     const context = previewContextRef.current;
     if (context && context.state !== "closed") void context.close();
   }, []);
-
-  const active = state === "count-in" || state === "recording" || state === "processing";
 
   function handlePhase(phase: RhythmCapturePhase) {
     setMessage(phaseMessage(phase));
@@ -102,7 +112,7 @@ export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
   async function startCapture() {
     if (active) return;
     stopPreview();
-    const captureBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
+    const captureBpm = validTempo(captureTempo);
     const controller = new AbortController();
     abortRef.current = controller;
     setNotes([]);
@@ -227,6 +237,10 @@ export function VoiceMidiCapture({ bpm }: VoiceMidiCaptureProps) {
     <section className="module patternModule">
       <div className="moduleTitle">01B // VOICE → MIDI</div>
       <div className="midiWarning">ONE BAR • HUM / SING “AH” • ONE NOTE AT A TIME • NO CHORDS OR BACKING TRACK</div>
+      <div className="voiceCapture">
+        <label className="miniControl"><span>CAPTURE BPM</span><DraftNumberInput value={captureTempo} min={40} max={240} step={1} onCommit={setCaptureTempo} ariaLabel="Voice capture BPM" /></label>
+        <div className="voiceNote">SET THE TEMPO FIRST. YOU GET A 4-BEAT COUNT-IN, THEN EXACTLY ONE BAR TO HUM OR SING THE MELODY.</div>
+      </div>
       <div className="actionRail">
         <div className="lcdStatus" role="status" aria-live="polite">{message}</div>
         {active ? (
