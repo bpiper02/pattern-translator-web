@@ -10,6 +10,7 @@ import { ResampleWorkspace } from "./components/ResampleWorkspace";
 import { SplitWorkspace } from "./components/SplitWorkspace";
 import { DraftNumberInput } from "./components/DraftNumberInput";
 import { AssetBin } from "./components/AssetBin";
+import { VoiceMidiCapture } from "./components/VoiceMidiCapture";
 import {
   addProjectAsset,
   removeProjectAsset,
@@ -354,6 +355,8 @@ export function App() {
               <button className={mode === "melody" ? "active" : ""} onClick={() => switchMode("melody")}><Music2 size={16} /> MELODY</button>
             </div>
           </section>
+
+          {mode === "melody" && <VoiceMidiCapture bpm={sourceBpm} />}
 
           <section className="module sourceModule">
             <div className="moduleTitle">02 // SOURCE AUDIO</div>

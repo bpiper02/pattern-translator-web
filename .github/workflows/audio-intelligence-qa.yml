@@ -10,6 +10,7 @@ on:
       - feat/preview-export-parity
       - feat/sample-fidelity
       - feat/split-asset-bin
+      - feat/chopsticks-integration-qa
       - spike/melody-transcription-bakeoff
   workflow_dispatch:
 
@@ -44,86 +45,92 @@ jobs:
       - name: Production voice melody regression
         run: node qa/voice-melody-regression.mjs
 
+      - name: Compile MIDI module for regression
+        run: npx tsc src/midi.ts --outDir .qa-midi-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
+
+      - name: Melody MIDI regression
+        run: node qa/melody-midi-regression.mjs
+
       - name: Compile beat-grid core for regression
-        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx tsc src/analysis/drumGrid.ts --outDir .qa-beat-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum grid alignment regression
-        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: startsWith(github.ref_name, 'feat/beat-') || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/drum-grid-alignment.mjs
 
       - name: Compile drum timbre core for regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx tsc src/analysis/drumTimbreCore.ts --outDir .qa-timbre-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum timbre clustering regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/drum-timbre-core.mjs
 
       - name: Drum timbre Essentia regression
-        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/beat-timbre-accuracy' || github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/drum-timbre-essentia.mjs
 
       - name: Bundle layered drum core for regression
-        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx esbuild src/analysis/layeredDrumsCore.ts --bundle --platform=node --format=esm --outfile=.qa-layer-dist/layeredDrumsCore.js
 
       - name: Layered drum core regression
-        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/layered-drums-core.mjs
 
       - name: Layered drum Essentia regression
-        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/layered-drums-essentia.mjs
 
       - name: Compile drum slice boundary core
-        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx tsc src/audio/drumSlice.ts --outDir .qa-slice-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum slice layering regression
-        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/layered-drum-hits' || github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/drum-slice-layering.mjs
 
       - name: Compile pattern renderer for parity regression
-        if: github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx tsc src/audio/patternRender.ts --outDir .qa-render-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Pattern render parity regression
-        if: github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/preview-export-parity' || github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/pattern-render-parity.mjs
 
       - name: Bundle representative selector for regression
-        if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx esbuild src/audio/drumRepresentative.ts --bundle --platform=node --format=esm --outfile=.qa-representative-dist/drumRepresentative.js
 
       - name: Drum representative selection regression
-        if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/drum-representative.mjs
 
       - name: Compile adaptive drum envelope slicer
-        if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx tsc src/audio/drumEnvelopeSlice.ts --outDir .qa-envelope-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Drum adaptive tail regression
-        if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/drum-envelope-slice.mjs
 
       - name: Compile project asset model
-        if: github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: npx tsc src/project/assets.ts --outDir .qa-project-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
 
       - name: Project asset lineage regression
-        if: github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: node qa/project-assets.mjs
 
       - name: Backend separation profile regression
-        if: github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         env:
           PYTHONPATH: .
         run: python qa/separation-profiles.py
 
       - name: Backend Python syntax regression
-        if: github.ref_name == 'feat/split-asset-bin'
+        if: github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa'
         run: python -m py_compile backend/app.py backend/separation_profiles.py backend/benchmark_split.py
 
       - name: Corrected melody bakeoff v2
