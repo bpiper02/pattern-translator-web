@@ -10,6 +10,7 @@ import "./chopsticks.css";
 import "./chopsticks-copy.css";
 import "./chopsticks-tools.css";
 import "./chopsticks-sampler.css";
+import "./chopsticks-qa.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
