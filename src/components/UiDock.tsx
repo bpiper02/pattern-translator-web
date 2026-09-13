@@ -14,14 +14,54 @@ const SKINS: { id: Skin; label: string; swatch: string }[] = [
 
 const DEFAULT_PAD = "#d92920";
 
+function storageGet(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Appearance persistence is optional. Never let storage policy break audio work.
+  }
+}
+
+function storageRemove(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Best-effort only.
+  }
+}
+
 function readSkin(): Skin {
-  const value = window.localStorage.getItem("chopsticks.skin");
+  const value = storageGet("chopsticks.skin");
   return SKINS.some((skin) => skin.id === value) ? value as Skin : "red";
 }
 
+function constrainPadColor(value: string) {
+  if (!/^#[0-9a-f]{6}$/i.test(value)) return DEFAULT_PAD;
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16));
+  const brightness = channels[0] * 0.299 + channels[1] * 0.587 + channels[2] * 0.114;
+  let next = channels;
+
+  if (brightness < 78) {
+    const amount = Math.min(0.58, (78 - brightness) / Math.max(1, 255 - brightness));
+    next = channels.map((channel) => Math.round(channel + (255 - channel) * amount));
+  } else if (brightness > 205) {
+    const amount = Math.min(0.45, (brightness - 205) / Math.max(1, brightness));
+    next = channels.map((channel) => Math.round(channel * (1 - amount)));
+  }
+
+  return `#${next.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
 function readPadColor() {
-  const value = window.localStorage.getItem("chopsticks.padColor");
-  return /^#[0-9a-f]{6}$/i.test(value ?? "") ? value! : DEFAULT_PAD;
+  return constrainPadColor(storageGet("chopsticks.padColor") ?? DEFAULT_PAD);
 }
 
 export function UiDock() {
@@ -31,19 +71,19 @@ export function UiDock() {
 
   useEffect(() => {
     document.documentElement.dataset.csSkin = skin;
-    window.localStorage.setItem("chopsticks.skin", skin);
+    storageSet("chopsticks.skin", skin);
   }, [skin]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--cs-pad", padColor);
-    window.localStorage.setItem("chopsticks.padColor", padColor);
+    storageSet("chopsticks.padColor", padColor);
   }, [padColor]);
 
   function resetAppearance() {
     setSkin("red");
     setPadColor(DEFAULT_PAD);
-    window.localStorage.removeItem("chopsticks.skin");
-    window.localStorage.removeItem("chopsticks.padColor");
+    storageRemove("chopsticks.skin");
+    storageRemove("chopsticks.padColor");
   }
 
   return (
@@ -92,13 +132,18 @@ export function UiDock() {
               <label className="padColorControl">
                 <span className="uiDockLabel">SEQUENCER / PAD COLOR</span>
                 <div>
-                  <input type="color" value={padColor} onChange={(event) => setPadColor(event.target.value)} aria-label="Sequencer and pad color" />
+                  <input
+                    type="color"
+                    value={padColor}
+                    onChange={(event) => setPadColor(constrainPadColor(event.target.value))}
+                    aria-label="Sequencer and pad color"
+                  />
                   <code>{padColor.toUpperCase()}</code>
                 </div>
               </label>
 
               <button type="button" className="resetSkin" onClick={resetAppearance}><RotateCcw size={13} /> RESET DEFAULT</button>
-              <small>Appearance settings are local to this browser and never change audio, project state, or exports.</small>
+              <small>Appearance settings are local to this browser and never change audio, project state, or exports. Extremely dark or light pad colors are automatically constrained for visibility.</small>
             </div>
           )}
         </section>
