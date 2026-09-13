@@ -21,17 +21,20 @@ function clamp01(value: number) {
 }
 
 function featureVector(feature: DrumTimbreFeatures) {
-  const flatness = clamp01((feature.flatnessDb + 60) / 60);
+  // Essentia's FlatnessDB output is documented as a flatness measure and in the
+  // current extractor is observed in a compact ~0..1 range for these transient
+  // windows. Keep it as a secondary similarity cue, not a hard drum-type rule.
+  const flatness = clamp01(feature.flatnessDb);
   const rolloff = clamp01(Math.log2(Math.max(40, feature.rolloffHz) / 40) / Math.log2(20_000 / 40));
-  const zcr = clamp01(feature.zcr / 0.35);
+  const zcr = clamp01(feature.zcr / 0.55);
   return [
-    clamp01(feature.lowRatio) * 1.35,
-    clamp01(feature.midLowRatio),
+    clamp01(feature.lowRatio) * 1.45,
+    clamp01(feature.midLowRatio) * 1.05,
     clamp01(feature.midHighRatio),
-    clamp01(feature.highRatio) * 1.35,
-    flatness * 0.75,
-    rolloff * 0.85,
-    zcr * 0.75,
+    clamp01(feature.highRatio) * 1.45,
+    flatness * 0.45,
+    rolloff * 0.80,
+    zcr * 0.90,
   ];
 }
 
@@ -97,28 +100,30 @@ function laneForCluster(cluster: Cluster, features: DrumTimbreFeatures[]): DrumL
   const mean = clusterMean(cluster, features);
   const upperEnergy = mean.midHighRatio + mean.highRatio;
 
-  // Kick: energy is concentrated in the low / low-mid body with a relatively
-  // low rolloff. This intentionally does not require a specific pitch.
+  // Kick-like: genuinely sub/low dominated. Requiring the low band itself to
+  // dominate prevents midrange toms/percussion from being mislabeled as kicks.
   if (
-    mean.lowRatio + mean.midLowRatio * 0.45 >= upperEnergy * 1.15 &&
+    mean.lowRatio >= 0.20 &&
+    mean.lowRatio >= mean.midLowRatio * 1.20 &&
+    mean.lowRatio >= upperEnergy * 1.35 &&
     mean.rolloffHz < 5_000
   ) return 0;
 
-  // Hat/cymbal-like: the *highest* band must dominate the upper-mid body, not
-  // merely be present. This prevents broad/noisy snares from being mislabeled
-  // as hats just because they also have high rolloff and lots of zero crossings.
+  // Hat/cymbal-like: highest band strongly dominates the spectrum.
   if (
-    mean.highRatio >= Math.max(0.16, mean.lowRatio * 1.15) &&
-    mean.highRatio >= mean.midHighRatio * 1.25 &&
+    mean.highRatio >= 0.30 &&
+    mean.highRatio >= mean.midHighRatio * 1.35 &&
     mean.rolloffHz >= 5_500 &&
     mean.zcr >= 0.06
   ) return 3;
 
-  // Snare/clap-like: broad/noisy upper-mid spectrum. Flatness closer to 0 dB
-  // means more noise-like; -28 dB is deliberately permissive for processed snares.
+  // Snare/clap-like: broadband/noisy transient. A snare may still have a lot of
+  // low-mid body, so use upper-band presence + rapid zero crossings rather than
+  // demanding that the high band dominate like a hat.
   if (
-    upperEnergy >= 0.38 &&
-    mean.flatnessDb >= -28
+    upperEnergy >= 0.24 &&
+    mean.zcr >= 0.07 &&
+    mean.rolloffHz >= 1_800
   ) return 1;
 
   return 2;
