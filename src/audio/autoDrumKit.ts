@@ -2,6 +2,7 @@ import { monoSamples } from "../audio";
 import { detectDrumOnsets } from "../analysis/drumOnsets";
 import { analyzeRhythm } from "../analysis/rhythm";
 import { alignHitsToBeatGrid, beatToStep } from "../analysis/drumGrid";
+import { nextDistinctEventTime } from "./drumSlice";
 
 export type AutoKitLane = "KICK" | "SNARE" | "HAT" | "PERC";
 
@@ -83,13 +84,15 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
 
     const ordered = [...candidates].sort((a, b) => b.velocity - a.velocity);
     const selected = ordered[0];
-    const chronological = [...hits].sort((a, b) => a.time - b.time);
-    const index = chronological.findIndex((hit) => hit.id === selected.id);
-    const next = index >= 0 ? chronological[index + 1] : undefined;
     const preRoll = 0.004;
     const maxTail = laneTailSeconds(lane);
     const start = Math.max(0, selected.time - preRoll);
-    const nextBoundary = next ? Math.max(start + 0.025, next.time - preRoll) : selected.time + maxTail;
+    // Layered hits can share one timestamp (kick+hat, snare+hat). Only a truly
+    // later musical event may cap the representative sample's natural tail.
+    const nextTime = nextDistinctEventTime(hits, selected.time);
+    const nextBoundary = nextTime != null
+      ? Math.max(start + 0.025, nextTime - preRoll)
+      : selected.time + maxTail;
     const end = Math.min(source.duration, selected.time + maxTail, nextBoundary);
     lanes[lane] = copySlice(source, start, end);
   }
