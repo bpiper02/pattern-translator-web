@@ -2,7 +2,7 @@ import Essentia from "essentia.js/dist/essentia.js-core.es.js";
 import { EssentiaWASM } from "essentia.js/dist/essentia-wasm.es.js";
 import type { DrumHit } from "../audio";
 import { extractDrumTimbreFeatures } from "./drumTimbre";
-import { classifyDrumTimbres } from "./drumTimbreCore";
+import { recoverLayeredDrumHits, type LayerBandOnsets } from "./layeredDrumsCore";
 
 const ANALYSIS_SR = 44100;
 let essentiaInstance: any | null = null;
@@ -67,12 +67,18 @@ function vectorLength(vector: any): number {
   return 0;
 }
 
-function runSuperFlux(essentia: any, signal: any, ratioThreshold: number, threshold: number): number[] {
+function runSuperFlux(
+  essentia: any,
+  signal: any,
+  ratioThreshold: number,
+  threshold: number,
+  combine = 35,
+): number[] {
   let onsetVector: any | null = null;
   try {
     const result = essentia.SuperFluxExtractor(
       signal,
-      35,
+      combine,
       2048,
       256,
       ratioThreshold,
@@ -87,6 +93,27 @@ function runSuperFlux(essentia: any, signal: any, ratioThreshold: number, thresh
   }
 }
 
+function filteredSuperFlux(essentia: any, signal: any, band: "low" | "mid" | "high") {
+  let first: any | null = null;
+  let second: any | null = null;
+  try {
+    if (band === "low") {
+      first = essentia.LowPass(signal, 190, ANALYSIS_SR);
+      return runSuperFlux(essentia, first.signal, 8, 0.02, 30);
+    }
+    if (band === "high") {
+      first = essentia.HighPass(signal, 5_000, ANALYSIS_SR);
+      return runSuperFlux(essentia, first.signal, 8, 0.02, 30);
+    }
+    first = essentia.HighPass(signal, 160, ANALYSIS_SR);
+    second = essentia.LowPass(first.signal, 5_000, ANALYSIS_SR);
+    return runSuperFlux(essentia, second.signal, 8, 0.02, 30);
+  } finally {
+    second?.signal?.delete?.();
+    first?.signal?.delete?.();
+  }
+}
+
 export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm: number): DrumHit[] {
   if (!samples.length || !Number.isFinite(sampleRate) || sampleRate <= 0) return [];
 
@@ -97,8 +124,9 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
   const signal = essentia.arrayToVector(analysis);
 
   try {
-    // First pass: near Essentia defaults. If the signal is unusually soft/sparse,
-    // retry with a more permissive peak picker instead of crashing on an empty vector.
+    // Full-band onset detection establishes candidate event times. Multiband
+    // detectors below decide whether one of those events contains multiple drum
+    // families; they do not independently create unrelated off-grid events.
     let onsetTimes = runSuperFlux(essentia, signal, 16, 0.05);
     if (!onsetTimes.length) onsetTimes = runSuperFlux(essentia, signal, 8, 0.02);
     if (!onsetTimes.length) return [];
@@ -112,9 +140,9 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
     const scoreFloor = Math.max(0.0015, scoreMedian * 0.45);
     const gated = candidates.filter((x) => x.score >= scoreFloor && x.peak >= 0.01);
 
-    // Chunk 2B will replace this global de-duplication with multiband layered-hit
-    // recovery. Keep it unchanged in 2A so timbre classification is the only
-    // production variable being evaluated here.
+    // De-dupe nearby full-band peak-picker observations into one event time. This
+    // no longer destroys simultaneous drums: multiband evidence can expand that
+    // single musical event back into several lanes after timbre analysis.
     const deduped: typeof gated = [];
     const minGap = 0.055;
     for (const item of gated) {
@@ -127,29 +155,28 @@ export function detectDrumOnsets(samples: Float32Array, sampleRate: number, bpm:
     }
     if (!deduped.length) return [];
 
+    const maxScore = Math.max(...deduped.map((x) => x.score), 1e-6);
+    const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
     const prepared = deduped.map((item, index) => ({
       ...item,
       id: `sf-${index}-${Math.round(item.time * 1000)}`,
-    }));
-
-    // Classify acoustically similar transients together using the actual source
-    // spectrum. This replaces the old source-relative brightness quartiles, which
-    // could split four identical kicks into four different UI lanes.
-    const timbreFeatures = extractDrumTimbreFeatures(essentia, analysis, prepared);
-    const lanes = classifyDrumTimbres(timbreFeatures);
-
-    const maxScore = Math.max(...prepared.map((x) => x.score), 1e-6);
-    const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
-
-    return prepared.map((item, index) => ({
-      id: item.id,
-      time: item.time,
-      // This is only a fallback musical position. The auto-kit path replaces it
-      // with beat-tick interpolation. Never redefine beat zero from the first hit.
       beat: item.time * safeBpm / 60,
-      lane: lanes[index] ?? 2,
       velocity: Math.max(48, Math.min(127, Math.round(48 + 79 * Math.sqrt(item.score / maxScore)))),
     }));
+
+    const timbreFeatures = extractDrumTimbreFeatures(essentia, analysis, prepared);
+    const bandOnsets: LayerBandOnsets = {
+      low: filteredSuperFlux(essentia, signal, "low"),
+      mid: filteredSuperFlux(essentia, signal, "mid"),
+      high: filteredSuperFlux(essentia, signal, "high"),
+    };
+
+    const layeredCandidates = prepared.map((item, index) => ({
+      ...item,
+      ...timbreFeatures[index],
+    }));
+
+    return recoverLayeredDrumHits(layeredCandidates, bandOnsets);
   } finally {
     signal.delete?.();
   }
