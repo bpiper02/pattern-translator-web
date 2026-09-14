@@ -11,12 +11,12 @@ def prune_job_directories(
     ttl_seconds: int,
     max_jobs: int,
     now: float | None = None,
+    protected_names: set[str] | None = None,
 ) -> list[str]:
-    """Remove expired jobs, then cap the remaining store by oldest mtime.
+    """Remove expired cache jobs and cap inactive survivors.
 
-    The splitter job directory is temporary cache material, not durable project
-    storage. `max_jobs=0` is valid when a caller wants to reserve all capacity
-    for a job it is about to create.
+    Active job ids can be protected explicitly. Protected directories never
+    count against ``max_jobs`` and are never removed by TTL/cap pruning.
     """
     if ttl_seconds < 0:
         raise ValueError("ttl_seconds must be non-negative")
@@ -25,14 +25,20 @@ def prune_job_directories(
 
     root.mkdir(parents=True, exist_ok=True)
     current_time = time.time() if now is None else now
+    protected = protected_names or set()
     removed: list[str] = []
     surviving: list[tuple[float, Path]] = []
 
     for path in root.iterdir():
-        if not path.is_dir():
+        if not path.is_dir() or path.name in protected:
             continue
         try:
             modified = path.stat().st_mtime
+            manifest = path / "job.json"
+            if manifest.is_file():
+                # The manifest is updated for every phase transition and is a
+                # much better freshness signal than directory mtime.
+                modified = max(modified, manifest.stat().st_mtime)
         except FileNotFoundError:
             continue
 
