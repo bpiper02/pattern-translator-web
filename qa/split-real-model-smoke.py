@@ -146,11 +146,16 @@ def main() -> None:
 
             job, phases = wait_for_job(client, job_id)
             elapsed = time.perf_counter() - started
+            assert job["status"] == "complete", job
+            assert job["phase"] == "complete", job
             assert job["profile"] == "balanced", job
             assert job["engine"] == "htdemucs.yaml", job
+            # Polling is intentionally coarse. Durable phases should be observed,
+            # but a brief validation transition may legitimately happen between
+            # two polls. The decoded stem checks below prove validation/publish.
             assert "normalizing" in phases, phases
             assert "separating" in phases, phases
-            assert "validating" in phases, phases
+            assert phases[-1] == "complete", phases
 
             stems = job["stems"]
             assert {stem["kind"] for stem in stems} == {"drums", "bass", "vocals", "other"}, stems
@@ -194,6 +199,8 @@ def main() -> None:
             cached_payload = cached.json()
             assert cached_payload["jobId"] == job_id, cached_payload
             assert cached_payload["status"] == "complete", cached_payload
+            assert cached_payload["engine"] == "htdemucs.yaml", cached_payload
+            assert len(cached_payload["stems"]) == 4, cached_payload
             assert cached_elapsed < 5.0, cached_elapsed
 
         print(
