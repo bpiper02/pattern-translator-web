@@ -97,7 +97,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   const routedAssetRef = useRef<string | null>(null);
   const extractGateRef = useRef(createOperationGate());
   const laneLoadGenerationRef = useRef<Record<LaneName, number>>(blankLaneLoadGeneration());
-  const mountedRef = useRef(true);
+  const mountedRef = useRef(false);
 
   function stopPatternPlayback() {
     patternPlaybackRef.current?.stop();
@@ -114,15 +114,21 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     for (const lane of LANES) laneLoadGenerationRef.current[lane] += 1;
   }
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    extractGateRef.current.invalidate();
-    invalidateLaneLoads();
-    renderTicketRef.current++;
-    patternPlaybackRef.current?.stop();
-    auditionPlaybackRef.current?.stop();
-    if (playheadTimerRef.current !== null) window.clearInterval(playheadTimerRef.current);
-    voiceCaptureAbortRef.current?.abort();
+  useEffect(() => {
+    // React StrictMode intentionally runs setup -> cleanup -> setup in dev.
+    // Reassert mounted ownership on every setup so async results are not
+    // silently discarded after the development-only cleanup pass.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      extractGateRef.current.invalidate();
+      invalidateLaneLoads();
+      renderTicketRef.current++;
+      patternPlaybackRef.current?.stop();
+      auditionPlaybackRef.current?.stop();
+      if (playheadTimerRef.current !== null) window.clearInterval(playheadTimerRef.current);
+      voiceCaptureAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -180,8 +186,6 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     setExtracting(true);
     setRendered(null);
     setSourcePattern(blankSourcePattern());
-    // A whole-source extraction owns the auto kit. Clear old source samples now
-    // so a lane missing from the new source can never leak in from the old kit.
     setLanes((current) => current.map((lane) => ({ ...blankLane(lane.name), steps: [...lane.steps] })));
     setMessage("ANALYZING SOURCE + EXTRACTING KIT…");
     try {
@@ -242,7 +246,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
       ...lane,
       steps: [...sourcePattern[lane.name]],
     })));
-    invalidate("SOURCE PATTERN COPIED — EDIT ANY AMBER STEP");
+    invalidate("SOURCE PATTERN COPIED — EDIT ANY ACTIVE STEP");
   }
 
   function clearPattern() {
@@ -342,7 +346,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
 
   function exportWav() {
     if (!rendered) return;
-    downloadBlob(audioBufferToWav(rendered), `pattern-translator-resample-${bpm}bpm.wav`);
+    downloadBlob(audioBufferToWav(rendered), `chopsticks-sample-${bpm}bpm.wav`);
   }
 
   function exportMidi() {
@@ -354,7 +358,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
       });
     });
     if (!hits.length) return;
-    downloadBlob(drumsMidi(hits, bpm), `pattern-translator-pattern-${bpm}bpm.mid`);
+    downloadBlob(drumsMidi(hits, bpm), `chopsticks-pattern-${bpm}bpm.mid`);
   }
 
   async function startVoiceCapture() {
@@ -376,8 +380,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
           } else if (phase.phase === "recording") {
             setCountIn(null);
             setRecording(true);
-            setProcessingVoice(false);
-            setMessage(`GO — BEATBOX / TAP ${voiceLane} FOR ONE BAR`);
+            setMessage(`RECORDING ${voiceLane} — ONE BAR`);
           } else {
             setCountIn(null);
             setRecording(false);
@@ -387,33 +390,31 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
         },
       });
       if (controller.signal.aborted) throw abortError();
-
-      const voiceFile = new File([blob], "voice-pattern.webm", { type: blob.type });
-      const voiceBuffer = await decodeAudio(voiceFile);
+      const decoded = await decodeAudio(blob);
       if (controller.signal.aborted) throw abortError();
-      const mono = monoSamples(voiceBuffer);
-      const onsets = detectVoiceRhythmOnsets(mono, voiceBuffer.sampleRate);
-      const activeSteps = new Set(quantizeRhythmCapture(onsets, { bpm: captureBpm, steps: STEPS }));
-      if (controller.signal.aborted) throw abortError();
+      const mono = monoSamples(decoded);
+      const onsets = detectVoiceRhythmOnsets(mono, decoded.sampleRate);
+      if (!onsets.length) throw new Error("No clear rhythm hits detected");
+      const quantized = quantizeRhythmCapture(onsets.map((time) => ({ time })), captureBpm, { stepsPerBeat: 4, beatsPerBar: 4 });
+      if (!quantized.length) throw new Error("Detected hits fell outside the bar");
       setLanes((current) => current.map((lane) => lane.name === voiceLane ? {
         ...lane,
-        steps: lane.steps.map((value, step) => value || activeSteps.has(step)),
+        steps: lane.steps.map((_, step) => quantized.some((hit) => hit.step === step)),
       } : lane));
-      invalidate(`VOICE → ${voiceLane} PATTERN — ${activeSteps.size} STEPS CAPTURED`);
+      invalidate(`${voiceLane} VOICE PATTERN READY — ${quantized.length} HITS`);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        if (mountedRef.current) setMessage("VOICE CAPTURE CANCELLED");
-      } else if (mountedRef.current) {
+      if (error instanceof DOMException && error.name === "AbortError") setMessage("VOICE CAPTURE CANCELLED");
+      else {
         console.error(error);
-        setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "COULD NOT ANALYZE VOICE INPUT"}`);
+        setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "VOICE CAPTURE FAILED"}`);
       }
     } finally {
+      if (voiceCaptureAbortRef.current === controller) voiceCaptureAbortRef.current = null;
       if (mountedRef.current) {
-        setRecording(false);
         setCountIn(null);
+        setRecording(false);
         setProcessingVoice(false);
       }
-      if (voiceCaptureAbortRef.current === controller) voiceCaptureAbortRef.current = null;
     }
   }
 
@@ -491,22 +492,18 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
             </div>
           ))}
         </div>
-        <div className="voiceNote sourceGridNote">Faint source markers are a visual transcription of the first detected bar, not locked steps. Click COPY SOURCE to start from it, or build a different pattern while keeping the original groove visible underneath.</div>
+        <div className="voiceNote sourceGridNote">Source markers show the detected first-bar groove. Copy them to start there, or build a different pattern on top.</div>
       </section>
 
       <section className="module">
         <div className="moduleTitle">03 // VOICE → PATTERN BETA</div>
         <div className="voiceCapture">
           <label className="miniControl"><span>VOICE TARGET</span><select value={voiceLane} disabled={voiceCaptureActive || processingVoice || rendering} onChange={(event) => setVoiceLane(event.target.value as LaneName)}>{LANES.map((lane) => <option key={lane}>{lane}</option>)}</select></label>
-          <button
-            className={voiceCaptureActive ? "recordButton active" : "recordButton"}
-            disabled={processingVoice || rendering}
-            onClick={() => voiceCaptureActive ? cancelVoiceCapture() : void startVoiceCapture()}
-          >
+          <button className={voiceCaptureActive ? "recordButton active" : "recordButton"} disabled={processingVoice || rendering} onClick={() => voiceCaptureActive ? cancelVoiceCapture() : void startVoiceCapture()}>
             {voiceCaptureActive ? <Square size={14} /> : <Mic size={14} />}
             {countIn !== null ? `START IN ${countIn}` : recording ? "CANCEL CAPTURE" : processingVoice ? "ANALYZING…" : "RECORD 1 BAR"}
           </button>
-          <div className="voiceNote">One sound at a time. Follow the 4-beat visual count-in, then beatbox/tap exactly one bar. Capture auto-stops; echo cancellation, noise suppression and auto-gain are disabled when the browser allows it.</div>
+          <div className="voiceNote">4-beat count-in, then beatbox or tap one bar.</div>
         </div>
       </section>
 
@@ -518,7 +515,6 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
           <button className="exportButton primaryExport" disabled={!rendered || rendering} onClick={exportWav}><Download size={14} /> EXPORT WAV</button>
           <button className="exportButton" disabled={rendering} onClick={exportMidi}>EXPORT MIDI</button>
         </div>
-        <div className="midiWarning">WORKING PREVIEW and WAV export use the same rendered AudioBuffer. SOURCE markers still depend on the BPM shown above; correct BPM and re-extract if the grid is shifted.</div>
       </section>
     </section>
   );
