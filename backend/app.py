@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
 import os
-import subprocess
-import sys
 import uuid
 from pathlib import Path
 
@@ -15,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from backend.job_storage import prune_job_directories
-from backend.runtime_tools import resolve_audio_separator_executable
+from backend.separator_service import run_separator
 from backend.separation_profiles import (
     classify_broad,
     classify_drum,
@@ -32,14 +30,12 @@ MODEL_ROOT.mkdir(parents=True, exist_ok=True)
 
 JOB_TTL_SECONDS = max(0, int(os.getenv("PT_JOB_TTL_SECONDS", "86400")))
 MAX_JOB_DIRS = max(1, int(os.getenv("PT_MAX_JOB_DIRS", "30")))
-API_REVISION = "split-runtime-v2"
+API_REVISION = "split-runtime-v3-python-api"
+LOGGER = logging.getLogger(__name__)
 
-app = FastAPI(title="Pattern Translator Splitter", version="0.3")
+app = FastAPI(title="Chopsticks Splitter", version="0.4")
 app.add_middleware(
     CORSMiddleware,
-    # Vite will transparently move to 5174/5175/etc. when 5173 is occupied.
-    # Restrict this regex to local development hosts while allowing that port
-    # fallback instead of hard-coding one port and causing opaque fetch errors.
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=False,
     allow_methods=["GET", "POST"],
@@ -73,8 +69,6 @@ def response_for(job_id: str, files: list[tuple[str, Path]], *, profile: str, en
 
 
 def prepare_job_dir(job_id: str) -> Path:
-    # Reserve one slot for the job we are about to create so the configured cap
-    # is exact even immediately after creation.
     prune_job_directories(
         DATA_ROOT,
         ttl_seconds=JOB_TTL_SECONDS,
@@ -106,31 +100,14 @@ def run_audio_separator(
     ensemble_preset: str | None = None,
     custom_output_names: dict[str, str] | None = None,
 ) -> list[Path]:
-    if bool(model) == bool(ensemble_preset):
-        raise RuntimeError("Specify exactly one separator model or ensemble preset")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    separator_executable = resolve_audio_separator_executable(sys.executable)
-    command = [
-        separator_executable, str(input_path),
-        "--output_format", "WAV",
-        "--output_dir", str(output_dir),
-        "--model_file_dir", str(MODEL_ROOT),
-        "--use_soundfile",
-    ]
-    if ensemble_preset:
-        command.extend(["--ensemble_preset", ensemble_preset])
-    else:
-        command.extend(["--model_filename", model or ""])
-    if custom_output_names:
-        command.extend(["--custom_output_names", json.dumps(custom_output_names, separators=(",", ":"))])
-    try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    except OSError as exc:
-        raise RuntimeError(f"Could not launch audio-separator from {separator_executable}: {exc}") from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "audio-separator failed")[-2000:]
-        raise RuntimeError(detail)
-    return list(output_dir.rglob("*.wav"))
+    return run_separator(
+        input_path,
+        output_dir,
+        MODEL_ROOT,
+        model=model,
+        ensemble_preset=ensemble_preset,
+        custom_output_names=custom_output_names,
+    )
 
 
 def collect_broad(paths: list[Path]) -> dict[str, Path]:
@@ -266,9 +243,8 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
                     profile="hq",
                     engine=f"ensemble:{selected.vocal_ensemble_preset} -> {selected.broad_model}",
                 )
-            except Exception:
-                # Preserve a usable path when optional community checkpoints or
-                # their transitive runtime dependencies are unavailable.
+            except Exception as exc:
+                LOGGER.warning("HQ split failed; falling back to balanced: %s", exc)
                 selected = full_mix_profile("balanced")
                 fallback = True
             else:
@@ -297,6 +273,7 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
     except HTTPException:
         raise
     except Exception as exc:
+        LOGGER.exception("Full-mix split failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -326,7 +303,8 @@ async def split_drums(file: UploadFile = File(...), profile: str = "hq") -> dict
                 required = {"kick", "snare", "hihat", "toms"}
                 if not required.issubset(found):
                     raise RuntimeError("MDX23C DrumSep did not return the expected drum families")
-            except Exception:
+            except Exception as exc:
+                LOGGER.warning("HQ drum split failed; falling back to standard: %s", exc)
                 selected = drum_profile("standard")
                 fallback = True
             else:
@@ -354,6 +332,7 @@ async def split_drums(file: UploadFile = File(...), profile: str = "hq") -> dict
     except HTTPException:
         raise
     except Exception as exc:
+        LOGGER.exception("Drum split failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
