@@ -6,6 +6,8 @@ import threading
 from pathlib import Path
 from typing import Callable, Protocol
 
+import soundfile as sf
+
 from backend.ffmpeg_runtime import ensure_ffmpeg_runtime
 
 
@@ -29,16 +31,30 @@ _DEMUCS_SHIFTS_BY_MODEL = {
 
 
 def _default_separator_factory(**kwargs) -> SeparatorLike:
-    # Provision FFmpeg inside the same process that will instantiate
-    # audio-separator. The package shells out to `ffmpeg` during __init__, so a
-    # probe in a different process is not sufficient to make PATH correct here.
     ensure_ffmpeg_runtime()
-
-    # Import lazily so lightweight backend policy/unit tests do not need to load
-    # torch/onnx/audio-separator merely by importing this module.
     from audio_separator.separator import Separator
-
     return Separator(**kwargs)
+
+
+def _assert_engine_input(path: Path) -> None:
+    """The separator engine only accepts decoded PCM WAV material.
+
+    Codec/container handling belongs to the ingest layer. Keeping this guard at
+    the engine boundary makes the old MP3-subtype-to-WAV export failure
+    impossible even if a future caller bypasses the normal pipeline.
+    """
+    path = Path(path)
+    if path.suffix.lower() != ".wav":
+        raise ValueError("Separator engine input must be normalized PCM WAV")
+    try:
+        info = sf.info(str(path))
+    except Exception as exc:
+        raise ValueError(f"Separator engine input is not decodable WAV: {exc}") from exc
+    subtype = str(info.subtype or "")
+    if not subtype.startswith("PCM_"):
+        raise ValueError(f"Separator engine input must use PCM WAV, got {subtype or 'unknown subtype'}")
+    if info.frames <= 0 or info.channels <= 0 or info.samplerate <= 0:
+        raise ValueError("Separator engine input is empty or invalid")
 
 
 def run_separator(
@@ -52,19 +68,13 @@ def run_separator(
     demucs_shifts: int | None = None,
     separator_factory: SeparatorFactory | None = None,
 ) -> list[Path]:
-    """Run audio-separator through its supported Python API.
-
-    Exactly one of ``model`` or ``ensemble_preset`` must be supplied. WAV
-    outputs deliberately use the FFmpeg/pydub writer rather than soundfile.
-    audio-separator 0.47.0 preserves an MP3 input subtype (MPEG_LAYER_III) when
-    ``use_soundfile=True`` and then asks libsndfile to write that encoding into
-    a WAV container, which fails only after inference has completed.
-    """
+    """Run audio-separator behind a strict PCM-WAV engine boundary."""
     if bool(model) == bool(ensemble_preset):
         raise ValueError("Specify exactly one separator model or ensemble preset")
     if demucs_shifts is not None and demucs_shifts < 0:
         raise ValueError("Demucs shifts cannot be negative")
 
+    _assert_engine_input(input_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     model_root.mkdir(parents=True, exist_ok=True)
     factory = separator_factory or _default_separator_factory
@@ -77,9 +87,10 @@ def run_separator(
         "model_file_dir": str(model_root),
         "output_dir": str(output_dir),
         "output_format": "WAV",
-        # WAV export through pydub/FFmpeg uses the detected bit depth instead of
-        # trying to preserve a lossy input codec as the WAV subtype.
-        "use_soundfile": False,
+        # Every engine input is PCM WAV now, so audio-separator's soundfile
+        # writer can safely preserve the PCM subtype. It avoids the extra pydub
+        # conversion/memory overhead while retaining bounded-memory output.
+        "use_soundfile": True,
         "ensemble_preset": ensemble_preset,
     }
     if effective_shifts is not None:
@@ -94,9 +105,7 @@ def run_separator(
         separator: SeparatorLike | None = None
         try:
             separator = factory(**separator_kwargs)
-
             if ensemble_preset:
-                # The library resolves the preset's model list internally.
                 separator.load_model()
             else:
                 separator.load_model(model_filename=model)
@@ -108,12 +117,7 @@ def run_separator(
             return outputs
         except Exception as exc:
             LOGGER.exception("Audio separation failed for %s", input_path)
-            # Keep the HTTP-facing message concise; the full traceback is
-            # retained in the backend terminal via LOGGER.exception above.
             raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc
         finally:
-            # Release model references promptly between local jobs. This matters
-            # on memory-constrained laptops where repeated splits can otherwise
-            # retain large torch/onnx objects until a later GC cycle.
             separator = None
             gc.collect()
