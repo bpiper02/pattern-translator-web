@@ -124,6 +124,14 @@ jobs:
         if: github.ref_name == 'feat/sample-fidelity' || github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa' || github.ref_name == 'feat/chopsticks-ui-overhaul'
         run: node qa/drum-envelope-slice.mjs
 
+      - name: Bundle long-source sampler stress target
+        if: github.ref_name == 'feat/chopsticks-ui-overhaul'
+        run: npx esbuild src/audio/longSourceSampler.ts --bundle --platform=node --format=esm --outfile=.qa-long-source-dist/longSourceSampler.js
+
+      - name: Long-source sampler stress regression
+        if: github.ref_name == 'feat/chopsticks-ui-overhaul'
+        run: node qa/long-source-sampler.mjs
+
       - name: Compile project asset model
         if: github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa' || github.ref_name == 'feat/chopsticks-ui-overhaul'
         run: npx tsc src/project/assets.ts --outDir .qa-project-dist --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck
