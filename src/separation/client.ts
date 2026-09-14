@@ -130,11 +130,12 @@ async function pollJob(
     if (job.status === "failed") throw new Error(job.error || "Split failed");
     if (job.status === "complete") {
       if (!job.engine || job.stems.length === 0) throw new Error("Split completed without usable stems");
+      const completedEngine = job.engine;
       const resolved = resolveStemUrls(job, apiBase);
       return {
         jobId: resolved.jobId,
         profile: resolved.profile,
-        engine: resolved.engine,
+        engine: completedEngine,
         stems: resolved.stems,
       };
     }
