@@ -6,6 +6,10 @@ audio-separator[cpu]==0.47.0
 # in its published dependency metadata. Pin it explicitly so Separator imports
 # are reproducible instead of failing only when the first song is processed.
 audioread==3.1.0
+# audio-separator also requires an ffmpeg executable at runtime. imageio-ffmpeg
+# supplies a local binary so Windows users do not need a separate global FFmpeg
+# installation or PATH configuration.
+imageio-ffmpeg==0.6.0
 drumsep>=0.1,<1
 numpy>=1.26,<3
 soundfile>=0.12,<1
