@@ -6,6 +6,7 @@ const root = process.cwd();
 const isWindows = process.platform === "win32";
 const SPLITTER_URL = "http://127.0.0.1:8788";
 const CORS_PROBE_ORIGIN = "http://localhost:5174";
+const EXPECTED_SPLITTER_REVISION = "split-runtime-v2";
 const RECOMMENDED_PYTHON = "3.12";
 const MAX_SUPPORTED_PYTHON_MINOR = 13;
 const venvPython = path.join(
@@ -70,7 +71,9 @@ async function probeSplitter() {
     });
     if (!response.ok) return "stale";
     const allowedOrigin = response.headers.get("access-control-allow-origin");
-    return allowedOrigin === CORS_PROBE_ORIGIN ? "current" : "stale";
+    if (allowedOrigin !== CORS_PROBE_ORIGIN) return "stale";
+    const health = await response.json().catch(() => null);
+    return health?.revision === EXPECTED_SPLITTER_REVISION ? "current" : "stale";
   } catch {
     return "offline";
   } finally {
