@@ -85,9 +85,6 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   }
 
   useEffect(() => {
-    // StrictMode intentionally runs setup -> cleanup -> setup in dev.
-    // Reassert the mounted flag on every setup so long-running model results
-    // are not discarded after React's development-only cleanup pass.
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -133,6 +130,8 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   }
 
   async function publishStems(resultStems: SplitStem[], parentId: string, gate: OperationGate, token: OperationToken) {
+    // Download all returned stems before mutating the Crate. If one output is
+    // inaccessible, fail atomically instead of publishing a half-complete set.
     const files = await Promise.all(resultStems.map(async (stem) => ({ stem, file: await stemUrlToFile(stem) })));
     if (!mountedRef.current || !gate.isCurrent(token)) return [];
 
@@ -165,14 +164,16 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
       : operationDrumProfile === "hq" ? "HQ DRUM SPLIT — MDX23C…" : "SPLITTING DRUM AUDIO…");
 
     try {
-      const sourceAsset = registerSource(nextFile, operationMode, existingAsset);
-      if (!splitGateRef.current.isCurrent(token)) return;
-      setSourceAssetId(sourceAsset.id);
-
+      // Do the expensive/networked work first. A failed request must not leave
+      // a ghost source asset in the Crate.
       const result = operationMode === "full"
         ? await splitFullMix(nextFile, operationFullProfile)
         : await splitDrumStem(nextFile, operationDrumProfile);
       if (!mountedRef.current || !splitGateRef.current.isCurrent(token)) return;
+
+      const sourceAsset = registerSource(nextFile, operationMode, existingAsset);
+      if (!splitGateRef.current.isCurrent(token)) return;
+      setSourceAssetId(sourceAsset.id);
 
       const published = await publishStems(result.stems, sourceAsset.id, splitGateRef.current, token);
       if (!mountedRef.current || !splitGateRef.current.isCurrent(token)) return;
