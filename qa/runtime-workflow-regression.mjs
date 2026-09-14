@@ -41,8 +41,14 @@ assert.doesNotMatch(backend, /allow_origins=\["http:\/\/localhost:5173"/);
 assert.match(splitterClient, /\/health/);
 assert.match(splitterClient, /Splitter backend unavailable/);
 
-// `npm run dev` is expected to be a full-app command, not a frontend-only trap.
-assert.match(devScript, /127\.0\.0\.1:8788\/health/);
+// `npm run dev` is a full-app command. The launcher must probe the splitter,
+// verify dynamic-port CORS compatibility, reject stale servers, and launch
+// both backend and Vite when the backend is offline.
+assert.match(devScript, /SPLITTER_URL = "http:\/\/127\.0\.0\.1:8788"/);
+assert.match(devScript, /CORS_PROBE_ORIGIN = "http:\/\/localhost:5174"/);
+assert.match(devScript, /\$\{SPLITTER_URL\}\/health/);
+assert.match(devScript, /access-control-allow-origin/);
+assert.match(devScript, /backendState === "stale"/);
 assert.match(devScript, /uvicorn/);
 assert.match(devScript, /vite/);
 assert.match(devScript, /audio_separator/);
