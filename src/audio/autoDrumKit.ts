@@ -1,5 +1,6 @@
 import { monoSamples } from "../audio";
 import { detectDrumOnsets } from "../analysis/drumOnsets";
+import type { LayeredDrumHit } from "../analysis/layeredDrumsCore";
 import { analyzeRhythm } from "../analysis/rhythm";
 import { alignHitsToBeatGrid, beatToStep } from "../analysis/drumGrid";
 import { nextDistinctEventTime } from "./drumSlice";
@@ -74,11 +75,16 @@ function selectLongSourceRepresentative<T extends BasicHit>(candidates: T[], all
     .sort((a, b) => b.score - a.score || b.hit.velocity - a.hit.velocity)[0].hit;
 }
 
+function laneName(hit: BasicHit) {
+  return LANE_BY_ANALYSIS_INDEX[Math.max(0, Math.min(LANE_BY_ANALYSIS_INDEX.length - 1, hit.lane))];
+}
+
 export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResult {
   const samples = monoSamples(source);
   const useLongSourcePath = source.duration > LONG_SOURCE_SECONDS;
-
+  let advancedHits: LayeredDrumHit[] | null = null;
   let hits: BasicHit[];
+
   if (useLongSourcePath) {
     // Full songs are a creative sample-finding problem, not a forensic drum
     // transcription problem. Avoid several full-track Essentia/WASM passes,
@@ -88,11 +94,12 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
     const detectedHits = detectDrumOnsets(samples, source.sampleRate, bpm);
     try {
       const rhythm = analyzeRhythm(samples, source.sampleRate);
-      hits = alignHitsToBeatGrid(detectedHits, rhythm.beats, rhythm.bpm || bpm);
+      advancedHits = alignHitsToBeatGrid(detectedHits, rhythm.beats, rhythm.bpm || bpm);
     } catch (error) {
       console.warn("Beat-grid alignment unavailable; using absolute-time fallback", error);
-      hits = alignHitsToBeatGrid(detectedHits, [], bpm);
+      advancedHits = alignHitsToBeatGrid(detectedHits, [], bpm);
     }
+    hits = advancedHits;
   }
 
   const grouped = new Map<AutoKitLane, BasicHit[]>();
@@ -106,7 +113,7 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
   } as Record<AutoKitLane, boolean[]>;
 
   for (const hit of hits) {
-    const lane = LANE_BY_ANALYSIS_INDEX[Math.max(0, Math.min(LANE_BY_ANALYSIS_INDEX.length - 1, hit.lane))];
+    const lane = laneName(hit);
     grouped.get(lane)!.push(hit);
 
     const step = beatToStep(hit.beat);
@@ -122,8 +129,11 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
     if (!candidates.length) continue;
 
     const selected = useLongSourcePath
-      ? selectLongSourceRepresentative(candidates, hits)
-      : selectRepresentativeDrumHit(candidates as any, hits as any);
+      ? selectLongSourceRepresentative(candidates as LightweightSamplerHit[], hits)
+      : selectRepresentativeDrumHit(
+          (advancedHits ?? []).filter((hit) => laneName(hit) === lane),
+          advancedHits ?? [],
+        );
     if (!selected) continue;
 
     const nextTime = nextDistinctEventTime(hits, selected.time);
