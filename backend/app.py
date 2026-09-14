@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from backend.job_storage import prune_job_directories
+from backend.runtime_tools import resolve_audio_separator_executable
 from backend.separation_profiles import (
     classify_broad,
     classify_drum,
@@ -30,6 +32,7 @@ MODEL_ROOT.mkdir(parents=True, exist_ok=True)
 
 JOB_TTL_SECONDS = max(0, int(os.getenv("PT_JOB_TTL_SECONDS", "86400")))
 MAX_JOB_DIRS = max(1, int(os.getenv("PT_MAX_JOB_DIRS", "30")))
+API_REVISION = "split-runtime-v2"
 
 app = FastAPI(title="Pattern Translator Splitter", version="0.3")
 app.add_middleware(
@@ -106,8 +109,9 @@ def run_audio_separator(
     if bool(model) == bool(ensemble_preset):
         raise RuntimeError("Specify exactly one separator model or ensemble preset")
     output_dir.mkdir(parents=True, exist_ok=True)
+    separator_executable = resolve_audio_separator_executable(sys.executable)
     command = [
-        "audio-separator", str(input_path),
+        separator_executable, str(input_path),
         "--output_format", "WAV",
         "--output_dir", str(output_dir),
         "--model_file_dir", str(MODEL_ROOT),
@@ -121,8 +125,8 @@ def run_audio_separator(
         command.extend(["--custom_output_names", json.dumps(custom_output_names, separators=(",", ":"))])
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    except FileNotFoundError as exc:
-        raise RuntimeError("audio-separator is not installed in the splitter environment") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not launch audio-separator from {separator_executable}: {exc}") from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "audio-separator failed")[-2000:]
         raise RuntimeError(detail)
@@ -203,6 +207,7 @@ def run_rule_based_drums(input_path: Path, output_dir: Path) -> list[Path]:
 def health() -> dict:
     return {
         "ok": True,
+        "revision": API_REVISION,
         "fullProfiles": ["balanced", "hq"],
         "drumProfiles": ["standard", "hq"],
         "jobTtlSeconds": JOB_TTL_SECONDS,
