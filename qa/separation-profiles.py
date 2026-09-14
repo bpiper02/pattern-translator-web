@@ -15,9 +15,10 @@ def check(actual, expected, label):
         raise AssertionError(f"{label}: expected {expected!r}, got {actual!r}")
 
 
-check(full_mix_profile("balanced").broad_model, "htdemucs_ft.yaml", "balanced broad model")
+check(full_mix_profile("balanced").broad_model, "htdemucs.yaml", "balanced broad model")
 check(full_mix_profile("balanced").vocal_model, None, "balanced vocal stage")
 check(full_mix_profile("balanced").vocal_ensemble_preset, None, "balanced vocal ensemble")
+check(full_mix_profile("hq").broad_model, "htdemucs_ft.yaml", "hq broad model")
 check(full_mix_profile("hq").vocal_ensemble_preset, "vocal_balanced", "hq vocal ensemble")
 check(drum_profile("standard").model, None, "standard drum model")
 check(drum_profile("hq").model, "MDX23C-DrumSep-aufr33-jarredou.ckpt", "hq drum model")
@@ -31,10 +32,10 @@ for bad, resolver in (("turbo", full_mix_profile), ("magic", drum_profile)):
         raise AssertionError(f"invalid profile {bad!r} should fail")
 
 broad_cases = {
-    "song_(Vocals)_htdemucs_ft.wav": "vocals",
-    "song_(Drums)_htdemucs_ft.wav": "drums",
-    "song_(Bass)_htdemucs_ft.wav": "bass",
-    "song_(Other)_htdemucs_ft.wav": "other",
+    "song_(Vocals)_htdemucs.wav": "vocals",
+    "song_(Drums)_htdemucs.wav": "drums",
+    "song_(Bass)_htdemucs.wav": "bass",
+    "song_(Other)_htdemucs.wav": "other",
 }
 for name, expected in broad_cases.items():
     check(classify_broad(Path(name)), expected, name)
@@ -74,7 +75,7 @@ for token in (
 
 # The backend used to shell out through the audio-separator CLI, which caused
 # Windows PATH/console-script failures and hid the real exception behind CLI
-# logging.  The endpoint must now use the in-process service only.
+# logging. The endpoint must now use the in-process service only.
 if "subprocess" in app_source or "resolve_audio_separator_executable" in app_source:
     raise AssertionError("backend app must not shell out to audio-separator")
 if "from backend.separator_service import run_separator" not in app_source:
