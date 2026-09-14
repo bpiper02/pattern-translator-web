@@ -42,8 +42,26 @@ function shortEngine(engine: string) {
   if (engine.includes("ensemble:vocal_balanced") && engine.includes("htdemucs")) return "VOCAL BALANCED ENSEMBLE → HTDEMUCS";
   if (engine.includes("melband_roformer") && engine.includes("htdemucs")) return "MEL-ROFORMER → HTDEMUCS";
   if (engine.includes("htdemucs_ft")) return engine.startsWith("fallback:") ? "HTDEMUCS FT FALLBACK" : "HTDEMUCS FT";
+  if (engine.includes("htdemucs")) return engine.startsWith("fallback:") ? "HTDEMUCS FALLBACK" : "HTDEMUCS";
   if (engine.includes("drumsep")) return engine.startsWith("fallback:") ? "RULE-BASED DRUMSEP FALLBACK" : "RULE-BASED DRUMSEP";
   return engine.toUpperCase();
+}
+
+function phaseMessage(phase: string) {
+  const labels: Record<string, string> = {
+    queued: "QUEUED…",
+    normalizing: "PREPARING AUDIO…",
+    separating: "SEPARATING FULL MIX…",
+    "separating-vocals": "ISOLATING VOCALS…",
+    "separating-instruments": "SEPARATING INSTRUMENTS…",
+    "separating-drums": "SEPARATING DRUM PARTS…",
+    validating: "CHECKING STEMS…",
+  };
+  return labels[phase] ?? phase.replaceAll("-", " ").toUpperCase();
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
@@ -65,6 +83,8 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   const drumGateRef = useRef(createOperationGate());
   const splitLockedRef = useRef(false);
   const drumLockedRef = useRef(false);
+  const splitAbortRef = useRef<AbortController | null>(null);
+  const drumAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(false);
 
   const drumsStem = useMemo(() => stems.find((stem) => stem.kind === "drums") ?? null, [stems]);
@@ -77,6 +97,10 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   }
 
   function invalidateOperations() {
+    splitAbortRef.current?.abort();
+    drumAbortRef.current?.abort();
+    splitAbortRef.current = null;
+    drumAbortRef.current = null;
     splitGateRef.current.invalidate();
     drumGateRef.current.invalidate();
     splitLockedRef.current = false;
@@ -89,6 +113,8 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      splitAbortRef.current?.abort();
+      drumAbortRef.current?.abort();
       splitGateRef.current.invalidate();
       drumGateRef.current.invalidate();
       splitLockedRef.current = false;
@@ -130,9 +156,14 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     return onAddAsset({ file: nextFile, kind: sourceKind(operationMode), label: nextFile.name, origin: "upload" });
   }
 
-  async function downloadStems(resultStems: SplitStem[], gate: OperationGate, token: OperationToken) {
+  async function downloadStems(
+    resultStems: SplitStem[],
+    gate: OperationGate,
+    token: OperationToken,
+    signal?: AbortSignal,
+  ) {
     const downloaded = await Promise.all(
-      resultStems.map(async (stem): Promise<DownloadedStem> => ({ stem, file: await stemUrlToFile(stem) })),
+      resultStems.map(async (stem): Promise<DownloadedStem> => ({ stem, file: await stemUrlToFile(stem, signal) })),
     );
     return mountedRef.current && gate.isCurrent(token) ? downloaded : [];
   }
@@ -150,6 +181,10 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   async function runSplit(nextFile = file, existingAsset?: ProjectAudioAsset) {
     if (!nextFile || splitLockedRef.current || drumLockedRef.current) return;
     splitLockedRef.current = true;
+    splitAbortRef.current?.abort();
+    drumAbortRef.current?.abort();
+    const controller = new AbortController();
+    splitAbortRef.current = controller;
     const token = splitGateRef.current.begin();
     drumGateRef.current.invalidate();
     const operationMode = mode;
@@ -163,19 +198,19 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     setDrumSubstems([]);
     setDrumsAssetId(null);
     setLastEngine(null);
-    setMessage(operationMode === "full"
-      ? operationFullProfile === "hq" ? "HQ REMIX SPLIT — ROFORMER VOCALS + DEMUCS INSTRUMENTS…" : "SEPARATING FULL MIX…"
-      : operationDrumProfile === "hq" ? "HQ DRUM SPLIT — MDX23C…" : "SPLITTING DRUM AUDIO…");
+    setMessage("UPLOADING SOURCE…");
+
+    const onProgress = (phase: string) => {
+      if (mountedRef.current && splitGateRef.current.isCurrent(token)) setMessage(phaseMessage(phase));
+    };
 
     try {
       const result = operationMode === "full"
-        ? await splitFullMix(nextFile, operationFullProfile)
-        : await splitDrumStem(nextFile, operationDrumProfile);
+        ? await splitFullMix(nextFile, operationFullProfile, onProgress, controller.signal)
+        : await splitDrumStem(nextFile, operationDrumProfile, onProgress, controller.signal);
       if (!mountedRef.current || !splitGateRef.current.isCurrent(token)) return;
 
-      // Fetch every returned WAV before committing any new Crate objects. This
-      // makes backend/network failure a clean no-op for project state.
-      const downloaded = await downloadStems(result.stems, splitGateRef.current, token);
+      const downloaded = await downloadStems(result.stems, splitGateRef.current, token, controller.signal);
       if (!mountedRef.current || !splitGateRef.current.isCurrent(token) || downloaded.length !== result.stems.length) return;
 
       const sourceAsset = registerSource(nextFile, operationMode, existingAsset);
@@ -193,10 +228,12 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
       const fallback = result.profile.includes("fallback") ? " // FALLBACK USED" : "";
       setMessage(`SPLIT READY — ${result.stems.length} STEMS ADDED TO PROJECT BIN${fallback}`);
     } catch (error) {
+      if (isAbortError(error)) return;
       if (!mountedRef.current || !splitGateRef.current.isCurrent(token)) return;
       console.error(error);
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "SPLIT FAILED"}`);
     } finally {
+      if (splitAbortRef.current === controller) splitAbortRef.current = null;
       if (splitGateRef.current.isCurrent(token)) {
         splitLockedRef.current = false;
         setBusy(false);
@@ -207,6 +244,9 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   async function splitDetectedDrums() {
     if (!drumsStem || splitLockedRef.current || drumLockedRef.current) return;
     drumLockedRef.current = true;
+    drumAbortRef.current?.abort();
+    const controller = new AbortController();
+    drumAbortRef.current = controller;
     const token = drumGateRef.current.begin();
     const operationDrumProfile = drumProfile;
     const operationParentId = drumsAssetId ?? sourceAssetId;
@@ -219,15 +259,16 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     stopAudio();
     setSplittingDrums(true);
     setLastEngine(null);
-    setMessage(operationDrumProfile === "hq"
-      ? "HQ DRUM SUB-SPLIT → MDX23C KICK / SNARE / HAT / CYMBALS / TOMS…"
-      : "SPLITTING DRUMS → KICK / SNARE / HAT / CYMBALS / TOMS…");
+    setMessage("PREPARING DRUM STEM…");
+    const onProgress = (phase: string) => {
+      if (mountedRef.current && drumGateRef.current.isCurrent(token)) setMessage(phaseMessage(phase));
+    };
     try {
-      const drumFile = await stemUrlToFile(drumsStem);
+      const drumFile = await stemUrlToFile(drumsStem, controller.signal);
       if (!mountedRef.current || !drumGateRef.current.isCurrent(token)) return;
-      const result = await splitDrumStem(drumFile, operationDrumProfile);
+      const result = await splitDrumStem(drumFile, operationDrumProfile, onProgress, controller.signal);
       if (!mountedRef.current || !drumGateRef.current.isCurrent(token)) return;
-      const downloaded = await downloadStems(result.stems, drumGateRef.current, token);
+      const downloaded = await downloadStems(result.stems, drumGateRef.current, token, controller.signal);
       if (!mountedRef.current || !drumGateRef.current.isCurrent(token) || downloaded.length !== result.stems.length) return;
       publishDownloadedStems(downloaded, operationParentId, drumGateRef.current, token);
       if (!mountedRef.current || !drumGateRef.current.isCurrent(token)) return;
@@ -237,10 +278,12 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
       const fallback = result.profile.includes("fallback") ? " // FALLBACK USED" : "";
       setMessage(`DRUM SUBSTEMS READY — ${result.stems.length} STEMS ADDED TO PROJECT BIN${fallback}`);
     } catch (error) {
+      if (isAbortError(error)) return;
       if (!mountedRef.current || !drumGateRef.current.isCurrent(token)) return;
       console.error(error);
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "DRUM SPLIT FAILED"}`);
     } finally {
+      if (drumAbortRef.current === controller) drumAbortRef.current = null;
       if (drumGateRef.current.isCurrent(token)) {
         drumLockedRef.current = false;
         setSplittingDrums(false);
@@ -319,11 +362,11 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
         {lastEngine && <div className="splitEngineReadout">ENGINE // {lastEngine}</div>}
       </section>
 
-      {renderStemRack("01 // BROAD STEMS", stems)}
+      {renderStemRack("BROAD STEMS", stems)}
 
-      {drumsStem && <section className="module splitDrumAction"><div className="moduleTitle">02 // DRUM SUB-SPLIT</div><div className="splitActionRow"><div className="midiWarning">This uses the separated DRUMS stem as a new child asset, then splits it into instrument-specific material. The original song and broad stems remain untouched in the bin. Current drum quality: {drumProfile === "hq" ? "HQ MDX23C" : "STANDARD DSP"}.</div><button className="processButton" disabled={active} onClick={() => void splitDetectedDrums()}><Scissors size={15} /> {splittingDrums ? "SPLITTING…" : "SPLIT DRUMS FURTHER"}</button></div></section>}
+      {drumsStem && <section className="module splitDrumAction"><div className="moduleTitle">DRUM SUB-SPLIT</div><div className="splitActionRow"><div className="midiWarning">Use the separated DRUMS stem as new source material without changing the original song or broad stems.</div><button className="processButton" disabled={active} onClick={() => void splitDetectedDrums()}><Scissors size={15} /> {splittingDrums ? "SPLITTING…" : "SPLIT DRUMS FURTHER"}</button></div></section>}
 
-      {renderStemRack(stems.length ? "03 // DRUM SUBSTEMS" : "01 // DRUM SUBSTEMS", drumSubstems)}
+      {renderStemRack("DRUM SUBSTEMS", drumSubstems)}
     </section>
   );
 }
