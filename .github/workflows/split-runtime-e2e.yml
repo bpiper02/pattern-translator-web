@@ -1,0 +1,83 @@
+name: Split Runtime E2E
+
+on:
+  push:
+    branches:
+      - fix/split-runtime-e2e-hardening
+    paths:
+      - "backend/**"
+      - "src/separation/**"
+      - "src/components/SplitWorkspace.tsx"
+      - "scripts/dev.mjs"
+      - "qa/split-real-model-smoke.py"
+      - "qa/separator-service.py"
+      - "qa/job-storage.py"
+      - ".github/workflows/split-runtime-e2e.yml"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+jobs:
+  windows-real-model:
+    name: Windows MP3 → real Demucs → 4 WAVs
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: .
+      PT_SMOKE_MODEL_ROOT: ${{ github.workspace }}\backend\data\models
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build frontend and runtime guards
+        run: npm run build
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install exact splitter runtime
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install "httpx>=0.27,<1"
+
+      - name: Cache separation models
+        uses: actions/cache@v4
+        with:
+          path: backend/data/models
+          key: split-models-${{ runner.os }}-htdemucs-v1
+
+      - name: Compile backend modules
+        run: >-
+          python -m py_compile
+          backend/app.py
+          backend/audio_contract.py
+          backend/job_storage.py
+          backend/separator_service.py
+          backend/separation_profiles.py
+          backend/split_jobs.py
+          backend/split_pipeline.py
+          backend/ffmpeg_runtime.py
+
+      - name: Engine boundary contract
+        run: python qa/separator-service.py
+
+      - name: Job storage lifecycle contract
+        run: python qa/job-storage.py
+
+      - name: Real encoded-MP3 job API smoke
+        run: python qa/split-real-model-smoke.py
