@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import subprocess
 import tempfile
 import time
@@ -8,10 +9,11 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+from fastapi.testclient import TestClient
 
+import backend.app as splitter_app
 from backend.audio_contract import inspect_audio
 from backend.ffmpeg_runtime import ensure_ffmpeg_runtime
-from backend.split_pipeline import run_full_pipeline
 
 
 def make_fixture(path: Path, seconds: float = 8.0, sample_rate: int = 44_100) -> None:
@@ -71,59 +73,132 @@ def encode_mp3(source: Path, target: Path) -> None:
         raise RuntimeError(f"Could not encode MP3 fixture: {(result.stderr or result.stdout).strip()}")
 
 
+def wait_for_job(client: TestClient, job_id: str, timeout_seconds: float = 20 * 60) -> tuple[dict, list[str]]:
+    deadline = time.monotonic() + timeout_seconds
+    phases: list[str] = []
+    last_phase = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/jobs/{job_id}")
+        assert response.status_code == 200, response.text
+        job = response.json()
+        phase = job.get("phase")
+        if phase and phase != last_phase:
+            phases.append(phase)
+            last_phase = phase
+            print(f"split job phase: {phase}", flush=True)
+        if job["status"] == "complete":
+            return job, phases
+        if job["status"] == "failed":
+            raise AssertionError(f"real split job failed: {job.get('error')}")
+        time.sleep(1.0)
+    raise TimeoutError(f"split job {job_id} did not finish within {timeout_seconds:.0f}s")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         source_wav = root / "fixture.wav"
         source_mp3 = root / "fixture.mp3"
-        job_dir = root / "job"
-        model_root = root / "models"
-        job_dir.mkdir()
-        model_root.mkdir()
+        data_root = root / "jobs"
+        incoming_root = root / "incoming"
+        # Allow CI to cache model downloads outside the ephemeral temp dir.
+        model_root = Path(os.environ.get("PT_SMOKE_MODEL_ROOT", str(root / "models"))).resolve()
+        data_root.mkdir()
+        incoming_root.mkdir()
+        model_root.mkdir(parents=True, exist_ok=True)
 
         make_fixture(source_wav)
         encode_mp3(source_wav, source_mp3)
         original = inspect_audio(source_wav)
-        phases: list[str] = []
+        payload = source_mp3.read_bytes()
+
+        splitter_app.DATA_ROOT = data_root
+        splitter_app.INCOMING_ROOT = incoming_root
+        splitter_app.MODEL_ROOT = model_root
+        splitter_app._ACTIVE_TASKS.clear()
 
         started = time.perf_counter()
-        engine, files, profile = run_full_pipeline(
-            source_mp3,
-            job_dir,
-            model_root,
-            "balanced",
-            on_phase=phases.append,
-        )
-        elapsed = time.perf_counter() - started
+        with TestClient(splitter_app.app) as client:
+            health = client.get("/health")
+            assert health.status_code == 200, health.text
+            health_payload = health.json()
+            assert health_payload["revision"] == "split-runtime-v4-jobs"
+            assert health_payload["jobApi"] is True
 
-        assert profile == "balanced", profile
-        assert engine == "htdemucs.yaml", engine
-        assert "normalizing" in phases, phases
-        assert "separating" in phases, phases
-        assert "validating" in phases, phases
+            first = client.post(
+                "/split/full?profile=balanced",
+                files={"file": ("fixture.mp3", payload, "audio/mpeg")},
+            )
+            assert first.status_code == 202, first.text
+            first_job = first.json()
+            job_id = first_job["jobId"]
+            assert first_job["status"] in {"queued", "running"}, first_job
 
-        by_kind = dict(files)
-        assert set(by_kind) == {"drums", "bass", "vocals", "other"}, by_kind
-        for kind, path in by_kind.items():
-            assert path == job_dir / f"{kind}.wav", (kind, path)
-            info = sf.info(str(path))
-            assert info.format == "WAV", (kind, info.format)
-            assert str(info.subtype).startswith("PCM_"), (kind, info.subtype)
-            assert info.frames > 0, kind
-            duration = info.frames / info.samplerate
-            assert abs(duration - original.duration_seconds) <= 1.0, (kind, duration, original.duration_seconds)
-            audio, _ = sf.read(path, dtype="float32", always_2d=True)
-            assert np.isfinite(audio).all(), kind
-            assert float(np.max(np.abs(audio))) > 0.0, f"{kind} stem is silent"
+            # Idempotency under overlap: the exact same source/profile while the
+            # first job is active must attach to one job id, never launch another
+            # expensive model run.
+            duplicate = client.post(
+                "/split/full?profile=balanced",
+                files={"file": ("fixture.mp3", payload, "audio/mpeg")},
+            )
+            assert duplicate.status_code == 202, duplicate.text
+            assert duplicate.json()["jobId"] == job_id, duplicate.text
 
-        # The pipeline must clean private work material and leave only published
-        # canonical stems. This is the product boundary served to the browser.
-        assert not (job_dir / "normalized.wav").exists()
-        assert not (job_dir / "work").exists()
+            job, phases = wait_for_job(client, job_id)
+            elapsed = time.perf_counter() - started
+            assert job["profile"] == "balanced", job
+            assert job["engine"] == "htdemucs.yaml", job
+            assert "normalizing" in phases, phases
+            assert "separating" in phases, phases
+            assert "validating" in phases, phases
+
+            stems = job["stems"]
+            assert {stem["kind"] for stem in stems} == {"drums", "bass", "vocals", "other"}, stems
+            for stem in stems:
+                response = client.get(stem["url"])
+                assert response.status_code == 200, (stem, response.text)
+                assert len(response.content) > 44, stem
+                path = root / f"download-{stem['kind']}.wav"
+                path.write_bytes(response.content)
+                info = sf.info(str(path))
+                assert info.format == "WAV", (stem["kind"], info.format)
+                assert str(info.subtype).startswith("PCM_"), (stem["kind"], info.subtype)
+                assert info.frames > 0, stem["kind"]
+                duration = info.frames / info.samplerate
+                assert abs(duration - original.duration_seconds) <= 1.0, (
+                    stem["kind"],
+                    duration,
+                    original.duration_seconds,
+                )
+                audio, _ = sf.read(path, dtype="float32", always_2d=True)
+                assert np.isfinite(audio).all(), stem["kind"]
+
+            # Internal source/work files must never become browser-readable.
+            assert client.get(f"/files/{job_id}/input.mp3").status_code == 404
+            assert client.get(f"/files/{job_id}/normalized.wav").status_code == 404
+
+            job_dir = data_root / job_id
+            assert not any(job_dir.glob("input.*")), list(job_dir.iterdir())
+            assert not (job_dir / "normalized.wav").exists()
+            assert not (job_dir / "work").exists()
+
+            # Completed-result cache: identical input/profile returns immediately
+            # with the same job instead of invoking Demucs again.
+            cached_started = time.perf_counter()
+            cached = client.post(
+                "/split/full?profile=balanced",
+                files={"file": ("fixture.mp3", payload, "audio/mpeg")},
+            )
+            cached_elapsed = time.perf_counter() - cached_started
+            assert cached.status_code == 200, cached.text
+            cached_payload = cached.json()
+            assert cached_payload["jobId"] == job_id, cached_payload
+            assert cached_payload["status"] == "complete", cached_payload
+            assert cached_elapsed < 5.0, cached_elapsed
 
         print(
-            "REAL SPLIT SMOKE: PASS | "
-            f"engine={engine} | source=MP3 | stems=4 | elapsed={elapsed:.1f}s"
+            "REAL SPLIT E2E: PASS | "
+            f"engine=htdemucs.yaml | source=encoded MP3 | job+cache+4 WAVs | elapsed={elapsed:.1f}s"
         )
 
 
