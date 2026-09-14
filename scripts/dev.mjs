@@ -4,6 +4,8 @@ import path from "node:path";
 
 const root = process.cwd();
 const isWindows = process.platform === "win32";
+const SPLITTER_URL = "http://127.0.0.1:8788";
+const CORS_PROBE_ORIGIN = "http://localhost:5174";
 const venvPython = path.join(
   root,
   "backend",
@@ -33,14 +35,19 @@ function findBackendPython() {
   return null;
 }
 
-async function splitterAlreadyRunning() {
+async function probeSplitter() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 900);
   try {
-    const response = await fetch("http://127.0.0.1:8788/health", { signal: controller.signal });
-    return response.ok;
+    const response = await fetch(`${SPLITTER_URL}/health`, {
+      signal: controller.signal,
+      headers: { Origin: CORS_PROBE_ORIGIN },
+    });
+    if (!response.ok) return "stale";
+    const allowedOrigin = response.headers.get("access-control-allow-origin");
+    return allowedOrigin === CORS_PROBE_ORIGIN ? "current" : "stale";
   } catch {
-    return false;
+    return "offline";
   } finally {
     clearTimeout(timeout);
   }
@@ -97,16 +104,20 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
-const backendRunning = await splitterAlreadyRunning();
-if (backendRunning) {
-  console.log("CHOPSTICKS DEV: splitter already healthy on http://127.0.0.1:8788");
+const backendState = await probeSplitter();
+if (backendState === "current") {
+  console.log(`CHOPSTICKS DEV: splitter already healthy on ${SPLITTER_URL}`);
+} else if (backendState === "stale") {
+  console.error(`\nCHOPSTICKS DEV: port 8788 is occupied by an old/incompatible splitter process.`);
+  console.error("Stop the old backend terminal/process, then run `npm run dev` again.\n");
+  process.exit(1);
 } else {
   const python = findBackendPython();
   if (!python) {
     printSetupHelp();
     process.exit(1);
   }
-  console.log("CHOPSTICKS DEV: starting splitter on http://127.0.0.1:8788");
+  console.log(`CHOPSTICKS DEV: starting splitter on ${SPLITTER_URL}`);
   launch(
     python.command,
     [...python.prefix, "-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8788"],
