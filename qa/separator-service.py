@@ -1,5 +1,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import wave
 
 from backend.separator_service import run_separator
 
@@ -31,10 +32,18 @@ def check(condition, label):
         raise AssertionError(label)
 
 
+def write_pcm_wav(path: Path, frames: int = 4410):
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(2)
+        output.setsampwidth(2)
+        output.setframerate(44100)
+        output.writeframes(b"\x00\x00" * 2 * frames)
+
+
 with TemporaryDirectory() as temp:
     root = Path(temp)
-    input_path = root / "song.mp3"
-    input_path.write_bytes(b"fake-audio")
+    input_path = root / "normalized.wav"
+    write_pcm_wav(input_path)
     model_root = root / "models"
 
     outputs = run_separator(
@@ -53,14 +62,12 @@ with TemporaryDirectory() as temp:
     balanced = FakeSeparator.instances[-1]
     check(balanced.loaded == "htdemucs.yaml", "balanced model must reach load_model")
     check(balanced.kwargs["output_format"] == "WAV", "service must request WAV output")
-    # Regression for the real MP3 failure: soundfile preserved MPEG_LAYER_III
-    # as the output subtype and could not write it inside a WAV container.
-    check(balanced.kwargs["use_soundfile"] is False, "MP3 to WAV must use FFmpeg/pydub writer")
+    check(balanced.kwargs["use_soundfile"] is True, "normalized PCM WAV should use bounded soundfile writer")
     check(balanced.kwargs["ensemble_preset"] is None, "model run must not accidentally enable an ensemble")
     check(balanced.kwargs["demucs_params"]["shifts"] == 0, "balanced Demucs must avoid shift multiplication on CPU")
     check({path.name for path in outputs} == {"drums.wav", "bass.wav", "vocals.wav", "other.wav"}, "model outputs")
 
-    outputs = run_separator(
+    run_separator(
         input_path,
         root / "hq-demucs",
         model_root,
@@ -82,9 +89,24 @@ with TemporaryDirectory() as temp:
     ensemble = FakeSeparator.instances[-1]
     check(ensemble.loaded is None, "ensemble preset must use load_model() without an explicit filename")
     check(ensemble.kwargs["ensemble_preset"] == "vocal_balanced", "ensemble preset must reach Separator constructor")
-    check(ensemble.kwargs["use_soundfile"] is False, "ensemble WAV output must use FFmpeg/pydub writer")
+    check(ensemble.kwargs["use_soundfile"] is True, "ensemble gets the same normalized PCM writer contract")
     check("demucs_params" not in ensemble.kwargs, "non-Demucs ensemble must not inherit broad-model shift tuning")
     check({path.name for path in outputs} == {"vocals.wav", "instrumental.wav"}, "ensemble outputs")
+
+    compressed = root / "song.mp3"
+    compressed.write_bytes(b"fake")
+    try:
+        run_separator(
+            compressed,
+            root / "compressed-invalid",
+            model_root,
+            model="htdemucs.yaml",
+            separator_factory=FakeSeparator,
+        )
+    except ValueError as exc:
+        check("normalized PCM WAV" in str(exc), "compressed input error should explain engine contract")
+    else:
+        raise AssertionError("separator engine must reject compressed input before model construction")
 
     for kwargs in ({}, {"model": "a", "ensemble_preset": "b"}):
         try:
