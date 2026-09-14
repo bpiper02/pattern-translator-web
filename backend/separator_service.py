@@ -42,32 +42,47 @@ def run_separator(
     model: str | None = None,
     ensemble_preset: str | None = None,
     custom_output_names: dict[str, str] | None = None,
+    demucs_shifts: int | None = None,
     separator_factory: SeparatorFactory | None = None,
 ) -> list[Path]:
     """Run audio-separator through its supported Python API.
 
-    Exactly one of ``model`` or ``ensemble_preset`` must be supplied. Keeping
-    this in-process removes the old FastAPI -> console-script -> Python hop,
-    which was fragile on Windows virtual environments and obscured real model
-    exceptions behind CLI logging.
+    Exactly one of ``model`` or ``ensemble_preset`` must be supplied. WAV
+    outputs deliberately use the FFmpeg/pydub writer rather than soundfile.
+    audio-separator 0.47.0 preserves an MP3 input subtype (MPEG_LAYER_III) when
+    ``use_soundfile=True`` and then asks libsndfile to write that encoding into
+    a WAV container, which fails only after inference has completed.
     """
     if bool(model) == bool(ensemble_preset):
         raise ValueError("Specify exactly one separator model or ensemble preset")
+    if demucs_shifts is not None and demucs_shifts < 0:
+        raise ValueError("Demucs shifts cannot be negative")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     model_root.mkdir(parents=True, exist_ok=True)
     factory = separator_factory or _default_separator_factory
 
+    separator_kwargs: dict[str, object] = {
+        "model_file_dir": str(model_root),
+        "output_dir": str(output_dir),
+        "output_format": "WAV",
+        # WAV export through pydub/FFmpeg uses the detected bit depth instead of
+        # trying to preserve a lossy input codec as the WAV subtype.
+        "use_soundfile": False,
+        "ensemble_preset": ensemble_preset,
+    }
+    if demucs_shifts is not None:
+        separator_kwargs["demucs_params"] = {
+            "segment_size": "Default",
+            "shifts": demucs_shifts,
+            "overlap": 0.25,
+            "segments_enabled": True,
+        }
+
     with _SEPARATOR_LOCK:
         separator: SeparatorLike | None = None
         try:
-            separator = factory(
-                model_file_dir=str(model_root),
-                output_dir=str(output_dir),
-                output_format="WAV",
-                use_soundfile=True,
-                ensemble_preset=ensemble_preset,
-            )
+            separator = factory(**separator_kwargs)
 
             if ensemble_preset:
                 # The library resolves the preset's model list internally.
