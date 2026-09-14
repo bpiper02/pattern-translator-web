@@ -6,7 +6,7 @@ const root = process.cwd();
 const isWindows = process.platform === "win32";
 const SPLITTER_URL = "http://127.0.0.1:8788";
 const CORS_PROBE_ORIGIN = "http://localhost:5174";
-const EXPECTED_SPLITTER_REVISION = "split-runtime-v4-runtime-contract";
+const EXPECTED_SPLITTER_REVISION = "split-runtime-v3-python-api";
 const EXPECTED_AUDIO_SEPARATOR = "0.47.0";
 const RECOMMENDED_PYTHON = "3.12";
 const MAX_SUPPORTED_PYTHON_MINOR = 13;
@@ -45,8 +45,7 @@ function inspectPython(candidate) {
 
 function findBackendPython() {
   // Import the real Separator class, not merely the top-level package. This
-  // catches missing runtime dependencies (for example audioread) before Vite
-  // opens a UI that can only fail after the user waits on a split.
+  // catches missing runtime dependencies before the UI starts.
   const runtimeProbe = [
     "import fastapi, uvicorn, numpy, soundfile, drumsep, audioread",
     "from audio_separator.separator import Separator",
@@ -166,6 +165,15 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
+// Validate the exact Python runtime first, even if a backend is already alive.
+// This prevents a superficially healthy /health response from hiding a broken
+// Separator import chain in the current venv.
+const python = findBackendPython();
+if (!python) {
+  printSetupHelp();
+  process.exit(1);
+}
+
 const backendState = await probeSplitter();
 if (backendState === "current") {
   console.log(`CHOPSTICKS DEV: splitter already healthy on ${SPLITTER_URL}`);
@@ -174,11 +182,6 @@ if (backendState === "current") {
   console.error("Stop the old backend terminal/process, then run `npm run dev` again.\n");
   process.exit(1);
 } else {
-  const python = findBackendPython();
-  if (!python) {
-    printSetupHelp();
-    process.exit(1);
-  }
   console.log(`CHOPSTICKS DEV: starting splitter with Python ${python.version} on ${SPLITTER_URL}`);
   launch(
     python.command,
