@@ -64,7 +64,7 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
   const drumGateRef = useRef(createOperationGate());
   const splitLockedRef = useRef(false);
   const drumLockedRef = useRef(false);
-  const mountedRef = useRef(true);
+  const mountedRef = useRef(false);
 
   const drumsStem = useMemo(() => stems.find((stem) => stem.kind === "drums") ?? null, [stems]);
   const active = busy || splittingDrums;
@@ -84,14 +84,20 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     setSplittingDrums(false);
   }
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    splitGateRef.current.invalidate();
-    drumGateRef.current.invalidate();
-    splitLockedRef.current = false;
-    drumLockedRef.current = false;
-    audioRef.current?.pause();
-    audioRef.current = null;
+  useEffect(() => {
+    // StrictMode intentionally runs setup -> cleanup -> setup in dev.
+    // Reassert the mounted flag on every setup so long-running model results
+    // are not discarded after React's development-only cleanup pass.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      splitGateRef.current.invalidate();
+      drumGateRef.current.invalidate();
+      splitLockedRef.current = false;
+      drumLockedRef.current = false;
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -123,36 +129,17 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
 
   function registerSource(nextFile: File, operationMode: SplitMode, existing?: ProjectAudioAsset) {
     if (existing) return existing;
-    return onAddAsset({
-      file: nextFile,
-      kind: sourceKind(operationMode),
-      label: nextFile.name,
-      origin: "upload",
-    });
+    return onAddAsset({ file: nextFile, kind: sourceKind(operationMode), label: nextFile.name, origin: "upload" });
   }
 
-  async function publishStems(
-    resultStems: SplitStem[],
-    parentId: string,
-    gate: OperationGate,
-    token: OperationToken,
-  ) {
-    const files = await Promise.all(resultStems.map(async (stem) => ({
-      stem,
-      file: await stemUrlToFile(stem),
-    })));
+  async function publishStems(resultStems: SplitStem[], parentId: string, gate: OperationGate, token: OperationToken) {
+    const files = await Promise.all(resultStems.map(async (stem) => ({ stem, file: await stemUrlToFile(stem) })));
     if (!mountedRef.current || !gate.isCurrent(token)) return [];
 
     const published: ProjectAudioAsset[] = [];
     for (const { stem, file: stemFile } of files) {
       if (!mountedRef.current || !gate.isCurrent(token)) return published;
-      published.push(onAddAsset({
-        file: stemFile,
-        kind: stem.kind,
-        label: stem.label,
-        origin: "split",
-        parentId,
-      }));
+      published.push(onAddAsset({ file: stemFile, kind: stem.kind, label: stem.label, origin: "split", parentId }));
     }
     return published;
   }
@@ -281,17 +268,9 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
         <div className="splitStemGrid">
           {items.map((stem) => (
             <div className="splitStemCard" key={`${stem.kind}-${stem.url}`}>
-              <div className="splitStemReadout">
-                <b>{stem.label}</b>
-                <span>{stem.fileName}</span>
-              </div>
-              <button className="abPlayButton" onClick={() => togglePreview(stem)}>
-                {playingUrl === stem.url ? <Pause size={13} /> : <Play size={13} />}
-                {playingUrl === stem.url ? "STOP" : "PREVIEW"}
-              </button>
-              <button className="utilityButton" onClick={() => downloadUrl(stem.url, stem.fileName)}>
-                <Download size={13} /> WAV
-              </button>
+              <div className="splitStemReadout"><b>{stem.label}</b><span>{stem.fileName}</span></div>
+              <button className="abPlayButton" onClick={() => togglePreview(stem)}>{playingUrl === stem.url ? <Pause size={13} /> : <Play size={13} />}{playingUrl === stem.url ? "STOP" : "PREVIEW"}</button>
+              <button className="utilityButton" onClick={() => downloadUrl(stem.url, stem.fileName)}><Download size={13} /> WAV</button>
             </div>
           ))}
         </div>
@@ -303,9 +282,7 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     <section className="splitWorkspace">
       <section className="module">
         <div className="moduleTitle">SPLIT // SOURCE SEPARATION</div>
-        <div className="resampleIntro">
-          Drop a full song for DRUMS / BASS / VOCALS / OTHER, or feed drum audio directly into the drum splitter. Every source and result is copied into the PROJECT BIN so it can be reused elsewhere without uploading again.
-        </div>
+        <div className="resampleIntro">Drop a full song for DRUMS / BASS / VOCALS / OTHER, or feed drum audio directly into the drum splitter. Every source and result is copied into the PROJECT BIN so it can be reused elsewhere without uploading again.</div>
 
         <div className="splitModeTabs">
           <button disabled={active} className={mode === "full" ? "active" : ""} onClick={() => chooseMode("full")}>FULL SONG / MIX</button>
@@ -314,82 +291,28 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
 
         <div className="splitQualityRow">
           {mode === "full" ? (
-            <>
-              <span>QUALITY</span>
-              <button className={fullProfile === "balanced" ? "utilityButton active" : "utilityButton"} disabled={active} onClick={() => setFullProfile("balanced")}>BALANCED // HTDEMUCS</button>
-              <button className={fullProfile === "hq" ? "utilityButton active" : "utilityButton"} disabled={active} onClick={() => setFullProfile("hq")}>HQ REMIX // ROFORMER + DEMUCS</button>
-              <small>HQ prioritizes cleaner vocals for sampling/remixing, then separates the instrumental remainder.</small>
-            </>
+            <><span>QUALITY</span><button className={fullProfile === "balanced" ? "utilityButton active" : "utilityButton"} disabled={active} onClick={() => setFullProfile("balanced")}>BALANCED // HTDEMUCS</button><button className={fullProfile === "hq" ? "utilityButton active" : "utilityButton"} disabled={active} onClick={() => setFullProfile("hq")}>HQ REMIX // ROFORMER + DEMUCS</button><small>HQ prioritizes cleaner vocals for sampling/remixing, then separates the instrumental remainder.</small></>
           ) : (
-            <>
-              <span>QUALITY</span>
-              <button className={drumProfile === "standard" ? "utilityButton active" : "utilityButton"} disabled={active} onClick={() => setDrumProfile("standard")}>STANDARD // DSP</button>
-              <button className={drumProfile === "hq" ? "utilityButton active" : "utilityButton"} disabled={active} onClick={() => setDrumProfile("hq")}>HQ // MDX23C</button>
-              <small>HQ uses the neural DrumSep model; STANDARD remains the CPU-light deterministic fallback.</small>
-            </>
+            <><span>QUALITY</span><button className={drumProfile === "standard" ? "utilityButton active" : "utilityButton"} disabled={active} onClick={() => setDrumProfile("standard")}>STANDARD // DSP</button><button className={drumProfile === "hq" ? "utilityButton active" : "utilityButton"} disabled={active} onClick={() => setDrumProfile("hq")}>HQ // MDX23C</button><small>HQ uses the neural DrumSep model; STANDARD remains the CPU-light deterministic fallback.</small></>
           )}
         </div>
 
-        {assets.length > 0 && (
-          <div className="splitBinSource">
-            <span>USE MATERIAL FROM PROJECT BIN</span>
-            <div className="splitBinChoices">
-              {assets.map((asset) => (
-                <button
-                  key={asset.id}
-                  className={sourceAssetId === asset.id ? "utilityButton active" : "utilityButton"}
-                  disabled={active}
-                  title={asset.file.name}
-                  onClick={() => void runSplit(asset.file, asset)}
-                >
-                  {assetKindLabel(asset.kind)} // {asset.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {assets.length > 0 && <div className="splitBinSource"><span>USE MATERIAL FROM PROJECT BIN</span><div className="splitBinChoices">{assets.map((asset) => <button key={asset.id} className={sourceAssetId === asset.id ? "utilityButton active" : "utilityButton"} disabled={active} title={asset.file.name} onClick={() => void runSplit(asset.file, asset)}>{assetKindLabel(asset.kind)} // {asset.label}</button>)}</div></div>}
 
         <label className="splitDrop">
           <Upload size={22} />
           <b>{file?.name ?? (mode === "full" ? "DROP / CHOOSE FULL SONG" : "DROP / CHOOSE DRUM AUDIO")}</b>
           <span>{mode === "full" ? "DRUMS / BASS / VOCALS / OTHER" : "KICK / SNARE / HI-HAT / CYMBALS / TOMS"}</span>
-          <input
-            type="file"
-            accept="audio/*"
-            hidden
-            disabled={active}
-            onChange={(event) => {
-              const next = event.target.files?.[0];
-              event.currentTarget.value = "";
-              if (next) void runSplit(next);
-            }}
-          />
+          <input type="file" accept="audio/*" hidden disabled={active} onChange={(event) => { const next = event.target.files?.[0]; event.currentTarget.value = ""; if (next) void runSplit(next); }} />
         </label>
 
-        {active ? (
-          <div className="vintageProgress">
-            <span>{message}</span>
-            <div className="progressTrack"><div className="progressBlocks" /></div>
-          </div>
-        ) : (
-          <div className="lcdStatus">{message}</div>
-        )}
+        {active ? <div className="vintageProgress"><span>{message}</span><div className="progressTrack"><div className="progressBlocks" /></div></div> : <div className="lcdStatus">{message}</div>}
         {lastEngine && <div className="splitEngineReadout">ENGINE // {lastEngine}</div>}
       </section>
 
       {renderStemRack("01 // BROAD STEMS", stems)}
 
-      {drumsStem && (
-        <section className="module splitDrumAction">
-          <div className="moduleTitle">02 // DRUM SUB-SPLIT</div>
-          <div className="splitActionRow">
-            <div className="midiWarning">This uses the separated DRUMS stem as a new child asset, then splits it into instrument-specific material. The original song and broad stems remain untouched in the bin. Current drum quality: {drumProfile === "hq" ? "HQ MDX23C" : "STANDARD DSP"}.</div>
-            <button className="processButton" disabled={active} onClick={() => void splitDetectedDrums()}>
-              <Scissors size={15} /> {splittingDrums ? "SPLITTING…" : "SPLIT DRUMS FURTHER"}
-            </button>
-          </div>
-        </section>
-      )}
+      {drumsStem && <section className="module splitDrumAction"><div className="moduleTitle">02 // DRUM SUB-SPLIT</div><div className="splitActionRow"><div className="midiWarning">This uses the separated DRUMS stem as a new child asset, then splits it into instrument-specific material. The original song and broad stems remain untouched in the bin. Current drum quality: {drumProfile === "hq" ? "HQ MDX23C" : "STANDARD DSP"}.</div><button className="processButton" disabled={active} onClick={() => void splitDetectedDrums()}><Scissors size={15} /> {splittingDrums ? "SPLITTING…" : "SPLIT DRUMS FURTHER"}</button></div></section>}
 
       {renderStemRack(stems.length ? "03 // DRUM SUBSTEMS" : "01 // DRUM SUBSTEMS", drumSubstems)}
     </section>
