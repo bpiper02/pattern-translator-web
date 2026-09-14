@@ -20,6 +20,13 @@ LOGGER = logging.getLogger(__name__)
 # browser tabs/actions from doubling torch/onnx memory and destabilizing the PC.
 _SEPARATOR_LOCK = threading.Lock()
 
+# The library defaults Demucs to two random shifts, multiplying CPU work. Keep
+# Balanced responsive and reserve extra inference for the explicit HQ model.
+_DEMUCS_SHIFTS_BY_MODEL = {
+    "htdemucs.yaml": 0,
+    "htdemucs_ft.yaml": 1,
+}
+
 
 def _default_separator_factory(**kwargs) -> SeparatorLike:
     # Provision FFmpeg inside the same process that will instantiate
@@ -62,6 +69,10 @@ def run_separator(
     model_root.mkdir(parents=True, exist_ok=True)
     factory = separator_factory or _default_separator_factory
 
+    effective_shifts = demucs_shifts
+    if effective_shifts is None and model:
+        effective_shifts = _DEMUCS_SHIFTS_BY_MODEL.get(Path(model).name)
+
     separator_kwargs: dict[str, object] = {
         "model_file_dir": str(model_root),
         "output_dir": str(output_dir),
@@ -71,10 +82,10 @@ def run_separator(
         "use_soundfile": False,
         "ensemble_preset": ensemble_preset,
     }
-    if demucs_shifts is not None:
+    if effective_shifts is not None:
         separator_kwargs["demucs_params"] = {
             "segment_size": "Default",
-            "shifts": demucs_shifts,
+            "shifts": effective_shifts,
             "overlap": 0.25,
             "segments_enabled": True,
         }
