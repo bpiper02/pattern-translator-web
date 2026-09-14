@@ -4,7 +4,8 @@
   "version": "0.7.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
     "prebuild": "node qa/ui-overhaul-regression.mjs && node qa/runtime-workflow-regression.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
