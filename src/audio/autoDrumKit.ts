@@ -5,6 +5,7 @@ import { alignHitsToBeatGrid, beatToStep } from "../analysis/drumGrid";
 import { nextDistinctEventTime } from "./drumSlice";
 import { selectRepresentativeDrumHit } from "./drumRepresentative";
 import { applySafetyFadeOut, findAdaptiveDrumSliceBounds } from "./drumEnvelopeSlice";
+import { detectLongSourceSamplerHits, type LightweightSamplerHit } from "./longSourceSampler";
 
 export type AutoKitLane = "KICK" | "SNARE" | "HAT" | "PERC";
 
@@ -16,7 +17,16 @@ export type AutoKitResult = {
 };
 
 const STEPS = 16;
+const LONG_SOURCE_SECONDS = 45;
 const LANE_BY_ANALYSIS_INDEX: AutoKitLane[] = ["KICK", "SNARE", "PERC", "HAT"];
+
+type BasicHit = {
+  id: string;
+  time: number;
+  beat: number;
+  lane: number;
+  velocity: number;
+};
 
 function copySlice(source: AudioBuffer, startSeconds: number, endSeconds: number): AudioBuffer {
   const sampleRate = source.sampleRate;
@@ -37,20 +47,55 @@ function copySlice(source: AudioBuffer, startSeconds: number, endSeconds: number
   return output;
 }
 
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function selectLongSourceRepresentative<T extends BasicHit>(candidates: T[], allHits: BasicHit[]): T | null {
+  if (!candidates.length) return null;
+  const indexById = new Map(allHits.map((hit, index) => [hit.id, index]));
+  const velocityMedian = median(candidates.map((hit) => hit.velocity));
+
+  return [...candidates]
+    .map((hit) => {
+      const index = indexById.get(hit.id) ?? -1;
+      const previous = index > 0 ? allHits[index - 1] : null;
+      const next = index >= 0 && index + 1 < allHits.length ? allHits[index + 1] : null;
+      const before = previous ? Math.max(0, hit.time - previous.time) : 0.25;
+      const after = next ? Math.max(0, next.time - hit.time) : 0.35;
+      const isolation = Math.min(1, Math.min(before / 0.10, after / 0.18));
+      const typical = Math.max(0, 1 - Math.abs(hit.velocity - velocityMedian) / 85);
+      const strength = Math.max(0, Math.min(1, (hit.velocity - 42) / 85));
+      return { hit, score: isolation * 0.58 + typical * 0.27 + strength * 0.15 };
+    })
+    .sort((a, b) => b.score - a.score || b.hit.velocity - a.hit.velocity)[0].hit;
+}
+
 export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResult {
   const samples = monoSamples(source);
-  const detectedHits = detectDrumOnsets(samples, source.sampleRate, bpm);
+  const useLongSourcePath = source.duration > LONG_SOURCE_SECONDS;
 
-  let hits = detectedHits;
-  try {
-    const rhythm = analyzeRhythm(samples, source.sampleRate);
-    hits = alignHitsToBeatGrid(detectedHits, rhythm.beats, rhythm.bpm || bpm);
-  } catch (error) {
-    console.warn("Beat-grid alignment unavailable; using absolute-time fallback", error);
-    hits = alignHitsToBeatGrid(detectedHits, [], bpm);
+  let hits: BasicHit[];
+  if (useLongSourcePath) {
+    // Full songs are a creative sample-finding problem, not a forensic drum
+    // transcription problem. Avoid several full-track Essentia/WASM passes,
+    // which can exhaust browser memory on ordinary laptops.
+    hits = detectLongSourceSamplerHits(samples, source.sampleRate, bpm);
+  } else {
+    const detectedHits = detectDrumOnsets(samples, source.sampleRate, bpm);
+    try {
+      const rhythm = analyzeRhythm(samples, source.sampleRate);
+      hits = alignHitsToBeatGrid(detectedHits, rhythm.beats, rhythm.bpm || bpm);
+    } catch (error) {
+      console.warn("Beat-grid alignment unavailable; using absolute-time fallback", error);
+      hits = alignHitsToBeatGrid(detectedHits, [], bpm);
+    }
   }
 
-  const grouped = new Map<AutoKitLane, typeof hits>();
+  const grouped = new Map<AutoKitLane, BasicHit[]>();
   for (const lane of LANE_BY_ANALYSIS_INDEX) grouped.set(lane, []);
 
   const sourcePattern = {
@@ -76,7 +121,9 @@ export function extractAutoDrumKit(source: AudioBuffer, bpm = 120): AutoKitResul
     counts[lane] = candidates.length;
     if (!candidates.length) continue;
 
-    const selected = selectRepresentativeDrumHit(candidates, hits);
+    const selected = useLongSourcePath
+      ? selectLongSourceRepresentative(candidates, hits)
+      : selectRepresentativeDrumHit(candidates as any, hits as any);
     if (!selected) continue;
 
     const nextTime = nextDistinctEventTime(hits, selected.time);
