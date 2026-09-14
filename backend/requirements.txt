@@ -2,6 +2,10 @@ fastapi>=0.116,<1
 uvicorn[standard]>=0.35,<1
 python-multipart>=0.0.20,<1
 audio-separator[cpu]==0.47.0
+# audio-separator 0.47.0 imports audioread at runtime but does not declare it
+# in its published dependency metadata. Pin it explicitly so Separator imports
+# are reproducible instead of failing only when the first song is processed.
+audioread==3.1.0
 drumsep>=0.1,<1
 numpy>=1.26,<3
 soundfile>=0.12,<1
