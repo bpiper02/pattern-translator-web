@@ -34,7 +34,10 @@ MAX_JOB_DIRS = max(1, int(os.getenv("PT_MAX_JOB_DIRS", "30")))
 app = FastAPI(title="Pattern Translator Splitter", version="0.3")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    # Vite will transparently move to 5174/5175/etc. when 5173 is occupied.
+    # Restrict this regex to local development hosts while allowing that port
+    # fallback instead of hard-coding one port and causing opaque fetch errors.
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -219,68 +222,77 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
     input_path = await save_upload(file, job_dir)
 
     try:
-        if selected.vocal_ensemble_preset or selected.vocal_model:
-            if selected.vocal_ensemble_preset:
+        if selected["profile"] == "hq":
+            try:
+                pair_dir = job_dir / "vocal_pair"
                 pair_paths = await asyncio.to_thread(
                     run_audio_separator,
                     input_path,
-                    job_dir / "vocal_refine",
-                    ensemble_preset=selected.vocal_ensemble_preset,
+                    pair_dir,
+                    ensemble_preset=selected["vocal_ensemble"],
                     custom_output_names={"Vocals": "vocals", "Instrumental": "instrumental"},
                 )
-                vocal_engine = f"ensemble:{selected.vocal_ensemble_preset}"
-            else:
-                pair_paths = await asyncio.to_thread(
-                    run_audio_separator,
-                    input_path,
-                    job_dir / "vocal_refine",
-                    model=selected.vocal_model,
-                    custom_output_names={"Vocals": "vocals", "Instrumental": "instrumental"},
-                )
-                vocal_engine = selected.vocal_model or "unknown"
-            pair = collect_pair(pair_paths)
-            if "vocals" not in pair or "instrumental" not in pair:
-                raise RuntimeError("HQ vocal separator did not produce both vocals and instrumental")
-            broad_paths = await asyncio.to_thread(
-                run_audio_separator,
-                pair["instrumental"],
-                job_dir / "broad",
-                model=selected.broad_model,
-            )
-            broad = collect_broad(broad_paths)
-            found = {kind: path for kind, path in broad.items() if kind in {"drums", "bass", "other"}}
-            found["vocals"] = pair["vocals"]
-            engine = f"{vocal_engine} -> {selected.broad_model}"
-        else:
-            broad_paths = await asyncio.to_thread(
-                run_audio_separator,
-                input_path,
-                job_dir / "broad",
-                model=selected.broad_model,
-            )
-            found = collect_broad(broad_paths)
-            engine = selected.broad_model
-    except RuntimeError as exc:
-        if profile != "hq":
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        fallback = full_mix_profile("balanced")
-        try:
-            fallback_paths = await asyncio.to_thread(
-                run_audio_separator,
-                input_path,
-                job_dir / "broad_fallback",
-                model=fallback.broad_model,
-            )
-            found = collect_broad(fallback_paths)
-            engine = f"fallback:{fallback.broad_model}"
-            profile = "balanced-fallback"
-        except RuntimeError as fallback_exc:
-            raise HTTPException(status_code=500, detail=str(fallback_exc)) from fallback_exc
+                pair = collect_pair(pair_paths)
+                vocals = pair.get("vocals")
+                instrumental = pair.get("instrumental")
+                if not vocals or not instrumental:
+                    raise RuntimeError("Vocal ensemble did not return vocals + instrumental")
 
-    ordered = [(kind, found[kind]) for kind in ("drums", "bass", "vocals", "other") if kind in found]
-    if len(ordered) < 3:
-        raise HTTPException(status_code=500, detail="Separator finished but too few recognizable stems were produced")
-    return response_for(job_id, ordered, profile=profile, engine=engine)
+                broad_dir = job_dir / "instrumental_broad"
+                broad_paths = await asyncio.to_thread(
+                    run_audio_separator,
+                    instrumental,
+                    broad_dir,
+                    model=selected["broad_model"],
+                )
+                broad = collect_broad(broad_paths)
+                required = {"drums", "bass", "other"}
+                if not required.issubset(broad):
+                    raise RuntimeError("Instrumental separator did not return drums/bass/other")
+                files = [
+                    ("drums", broad["drums"]),
+                    ("bass", broad["bass"]),
+                    ("vocals", vocals),
+                    ("other", broad["other"]),
+                ]
+                return response_for(
+                    job_id,
+                    files,
+                    profile="hq",
+                    engine=f"ensemble:{selected['vocal_ensemble']} -> {selected['broad_model']}",
+                )
+            except Exception:
+                # Preserve a usable path when optional community checkpoints or
+                # their transitive runtime dependencies are unavailable.
+                selected = full_mix_profile("balanced")
+                fallback = True
+            else:
+                fallback = False
+        else:
+            fallback = False
+
+        broad_dir = job_dir / "broad"
+        broad_paths = await asyncio.to_thread(
+            run_audio_separator,
+            input_path,
+            broad_dir,
+            model=selected["broad_model"],
+        )
+        broad = collect_broad(broad_paths)
+        required = {"drums", "bass", "vocals", "other"}
+        if not required.issubset(broad):
+            raise RuntimeError("Separator did not return all broad stems")
+        files = [(kind, broad[kind]) for kind in ("drums", "bass", "vocals", "other")]
+        return response_for(
+            job_id,
+            files,
+            profile="balanced-fallback" if fallback else "balanced",
+            engine=f"fallback:{selected['broad_model']}" if fallback else selected["broad_model"],
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/split/drums")
@@ -292,44 +304,61 @@ async def split_drums(file: UploadFile = File(...), profile: str = "hq") -> dict
 
     job_id = uuid.uuid4().hex
     job_dir = prepare_job_dir(job_id)
-    output_dir = job_dir / "drums"
     input_path = await save_upload(file, job_dir)
 
-    engine = "drumsep"
     try:
-        if selected.model:
-            paths = await asyncio.to_thread(
-                run_audio_separator,
-                input_path,
-                output_dir / "mdx23c",
-                model=selected.model,
-            )
-            engine = selected.model
-        else:
-            paths = await asyncio.to_thread(run_rule_based_drums, input_path, output_dir / "rule_based")
-    except Exception as exc:
-        if not selected.fallback_rule_based or not selected.model:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        try:
-            paths = await asyncio.to_thread(run_rule_based_drums, input_path, output_dir / "fallback")
-            engine = "fallback:drumsep"
-            profile = "standard-fallback"
-        except Exception as fallback_exc:
-            raise HTTPException(status_code=500, detail=str(fallback_exc)) from fallback_exc
+        fallback = False
+        if selected["profile"] == "hq":
+            try:
+                output_dir = job_dir / "drum_hq"
+                paths = await asyncio.to_thread(
+                    run_audio_separator,
+                    input_path,
+                    output_dir,
+                    model=selected["model"],
+                )
+                found = collect_drum(paths, output_dir)
+                required = {"kick", "snare", "hihat", "toms"}
+                if not required.issubset(found):
+                    raise RuntimeError("MDX23C DrumSep did not return the expected drum families")
+            except Exception:
+                selected = drum_profile("standard")
+                fallback = True
+            else:
+                files = [(kind, found[kind]) for kind in ("kick", "snare", "hihat", "cymbals", "toms") if kind in found]
+                return response_for(
+                    job_id,
+                    files,
+                    profile="hq",
+                    engine=selected["model"],
+                )
 
-    found = await asyncio.to_thread(collect_drum, paths, output_dir)
-    ordered = [(kind, found[kind]) for kind in ("kick", "snare", "hihat", "cymbals", "toms") if kind in found]
-    if not ordered:
-        raise HTTPException(status_code=500, detail="Drum separator finished but no recognizable substems were produced")
-    return response_for(job_id, ordered, profile=profile, engine=engine)
+        output_dir = job_dir / "drum_standard"
+        paths = await asyncio.to_thread(run_rule_based_drums, input_path, output_dir)
+        found = collect_drum(paths, output_dir)
+        required = {"kick", "snare", "hihat"}
+        if not required.issubset(found):
+            raise RuntimeError("Standard drum splitter did not return kick/snare/hi-hat")
+        files = [(kind, found[kind]) for kind in ("kick", "snare", "hihat", "cymbals", "toms") if kind in found]
+        return response_for(
+            job_id,
+            files,
+            profile="standard-fallback" if fallback else "standard",
+            engine="fallback:drumsep" if fallback else "drumsep",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/files/{job_id}/{file_name}")
-def serve_file(job_id: str, file_name: str) -> FileResponse:
-    if not job_id.isalnum() or Path(file_name).name != file_name:
-        raise HTTPException(status_code=400, detail="Invalid file path")
-    job_dir = DATA_ROOT / job_id
-    matches = list(job_dir.rglob(file_name))
-    if not matches:
-        raise HTTPException(status_code=404, detail="Stem not found")
-    return FileResponse(matches[0], media_type="audio/wav", filename=file_name)
+def get_file(job_id: str, file_name: str) -> FileResponse:
+    path = (DATA_ROOT / job_id / file_name).resolve()
+    try:
+        path.relative_to(DATA_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="File not found") from exc
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path, media_type="audio/wav", filename=path.name)
