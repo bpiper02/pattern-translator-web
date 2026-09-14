@@ -6,6 +6,8 @@ import threading
 from pathlib import Path
 from typing import Callable, Protocol
 
+from backend.ffmpeg_runtime import ensure_ffmpeg_runtime
+
 
 class SeparatorLike(Protocol):
     def load_model(self, model_filename: str | None = None) -> None: ...
@@ -20,6 +22,11 @@ _SEPARATOR_LOCK = threading.Lock()
 
 
 def _default_separator_factory(**kwargs) -> SeparatorLike:
+    # Provision FFmpeg inside the same process that will instantiate
+    # audio-separator. The package shells out to `ffmpeg` during __init__, so a
+    # probe in a different process is not sufficient to make PATH correct here.
+    ensure_ffmpeg_runtime()
+
     # Import lazily so lightweight backend policy/unit tests do not need to load
     # torch/onnx/audio-separator merely by importing this module.
     from audio_separator.separator import Separator
