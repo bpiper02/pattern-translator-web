@@ -222,14 +222,14 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
     input_path = await save_upload(file, job_dir)
 
     try:
-        if selected["profile"] == "hq":
+        if selected.name == "hq":
             try:
                 pair_dir = job_dir / "vocal_pair"
                 pair_paths = await asyncio.to_thread(
                     run_audio_separator,
                     input_path,
                     pair_dir,
-                    ensemble_preset=selected["vocal_ensemble"],
+                    ensemble_preset=selected.vocal_ensemble_preset,
                     custom_output_names={"Vocals": "vocals", "Instrumental": "instrumental"},
                 )
                 pair = collect_pair(pair_paths)
@@ -243,7 +243,7 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
                     run_audio_separator,
                     instrumental,
                     broad_dir,
-                    model=selected["broad_model"],
+                    model=selected.broad_model,
                 )
                 broad = collect_broad(broad_paths)
                 required = {"drums", "bass", "other"}
@@ -259,7 +259,7 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
                     job_id,
                     files,
                     profile="hq",
-                    engine=f"ensemble:{selected['vocal_ensemble']} -> {selected['broad_model']}",
+                    engine=f"ensemble:{selected.vocal_ensemble_preset} -> {selected.broad_model}",
                 )
             except Exception:
                 # Preserve a usable path when optional community checkpoints or
@@ -276,7 +276,7 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
             run_audio_separator,
             input_path,
             broad_dir,
-            model=selected["broad_model"],
+            model=selected.broad_model,
         )
         broad = collect_broad(broad_paths)
         required = {"drums", "bass", "vocals", "other"}
@@ -287,7 +287,7 @@ async def split_full(file: UploadFile = File(...), profile: str = "balanced") ->
             job_id,
             files,
             profile="balanced-fallback" if fallback else "balanced",
-            engine=f"fallback:{selected['broad_model']}" if fallback else selected["broad_model"],
+            engine=f"fallback:{selected.broad_model}" if fallback else selected.broad_model,
         )
     except HTTPException:
         raise
@@ -308,14 +308,14 @@ async def split_drums(file: UploadFile = File(...), profile: str = "hq") -> dict
 
     try:
         fallback = False
-        if selected["profile"] == "hq":
+        if selected.name == "hq":
             try:
                 output_dir = job_dir / "drum_hq"
                 paths = await asyncio.to_thread(
                     run_audio_separator,
                     input_path,
                     output_dir,
-                    model=selected["model"],
+                    model=selected.model,
                 )
                 found = collect_drum(paths, output_dir)
                 required = {"kick", "snare", "hihat", "toms"}
@@ -330,7 +330,7 @@ async def split_drums(file: UploadFile = File(...), profile: str = "hq") -> dict
                     job_id,
                     files,
                     profile="hq",
-                    engine=selected["model"],
+                    engine=selected.model or "MDX23C DrumSep",
                 )
 
         output_dir = job_dir / "drum_standard"
