@@ -6,7 +6,8 @@ const root = process.cwd();
 const isWindows = process.platform === "win32";
 const SPLITTER_URL = "http://127.0.0.1:8788";
 const CORS_PROBE_ORIGIN = "http://localhost:5174";
-const EXPECTED_SPLITTER_REVISION = "split-runtime-v3-python-api";
+const EXPECTED_SPLITTER_REVISION = "split-runtime-v4-runtime-contract";
+const EXPECTED_AUDIO_SEPARATOR = "0.47.0";
 const RECOMMENDED_PYTHON = "3.12";
 const MAX_SUPPORTED_PYTHON_MINOR = 13;
 const venvPython = path.join(
@@ -16,6 +17,7 @@ const venvPython = path.join(
   isWindows ? "Scripts/python.exe" : "bin/python",
 );
 const viteEntry = path.join(root, "node_modules", "vite", "bin", "vite.js");
+let backendProbeError = "";
 
 function pythonCandidates() {
   const candidates = [];
@@ -42,16 +44,28 @@ function inspectPython(candidate) {
 }
 
 function findBackendPython() {
-  const imports = "import fastapi, uvicorn, numpy, soundfile, drumsep, audio_separator";
+  // Import the real Separator class, not merely the top-level package. This
+  // catches missing runtime dependencies (for example audioread) before Vite
+  // opens a UI that can only fail after the user waits on a split.
+  const runtimeProbe = [
+    "import fastapi, uvicorn, numpy, soundfile, drumsep, audioread",
+    "from audio_separator.separator import Separator",
+    "from importlib.metadata import version",
+    `assert version('audio-separator') == '${EXPECTED_AUDIO_SEPARATOR}', version('audio-separator')`,
+  ].join("; ");
+
   for (const candidate of pythonCandidates()) {
     const info = inspectPython(candidate);
     if (!info?.supported) continue;
     const check = spawnSync(
       candidate.command,
-      [...candidate.prefix, "-c", imports],
-      { cwd: root, stdio: "ignore", shell: false },
+      [...candidate.prefix, "-c", runtimeProbe],
+      { cwd: root, encoding: "utf8", shell: false },
     );
     if (check.status === 0) return { ...candidate, version: info.version };
+    if (candidate.label === "backend/.venv") {
+      backendProbeError = (check.stderr || check.stdout || "backend runtime import check failed").trim();
+    }
   }
   return null;
 }
@@ -84,22 +98,34 @@ async function probeSplitter() {
 function printSetupHelp() {
   const venvInfo = existingVenvInfo();
   console.error("\nCHOPSTICKS DEV: splitter backend environment is not ready.\n");
-  if (venvInfo && !venvInfo.supported) {
-    console.error(`Detected backend/.venv Python ${venvInfo.version}. That interpreter is too new for the current Windows audio-separator dependency stack.`);
-    console.error(`Use Python ${RECOMMENDED_PYTHON} for the splitter environment.\n`);
+  if (backendProbeError) {
+    const lastLine = backendProbeError.split(/\r?\n/).filter(Boolean).at(-1);
+    if (lastLine) console.error(`Runtime check failed: ${lastLine}\n`);
   }
-  console.error("From the repo root run:");
-  if (isWindows) {
-    console.error("  Remove-Item -Recurse -Force .\\backend\\.venv -ErrorAction SilentlyContinue");
-    console.error(`  py install ${RECOMMENDED_PYTHON}`);
-    console.error(`  py -${RECOMMENDED_PYTHON} --version`);
-    console.error(`  py -${RECOMMENDED_PYTHON} -m venv .\\backend\\.venv`);
-    console.error("  .\\backend\\.venv\\Scripts\\python.exe -m pip install --upgrade pip");
-    console.error("  .\\backend\\.venv\\Scripts\\python.exe -m pip install -r .\\backend\\requirements.txt");
+  if (venvInfo?.supported) {
+    console.error("Repair the existing backend environment from the repo root:");
+    if (isWindows) {
+      console.error("  .\\backend\\.venv\\Scripts\\python.exe -m pip install -r .\\backend\\requirements.txt");
+    } else {
+      console.error("  ./backend/.venv/bin/python -m pip install -r ./backend/requirements.txt");
+    }
   } else {
-    console.error("  python3 -m venv ./backend/.venv");
-    console.error("  ./backend/.venv/bin/python -m pip install --upgrade pip");
-    console.error("  ./backend/.venv/bin/python -m pip install -r ./backend/requirements.txt");
+    if (venvInfo && !venvInfo.supported) {
+      console.error(`Detected backend/.venv Python ${venvInfo.version}. That interpreter is unsupported for the validated splitter stack.`);
+      console.error(`Use Python ${RECOMMENDED_PYTHON} for the splitter environment.\n`);
+    }
+    console.error("Create the backend environment from the repo root:");
+    if (isWindows) {
+      console.error("  Remove-Item -Recurse -Force .\\backend\\.venv -ErrorAction SilentlyContinue");
+      console.error(`  py install ${RECOMMENDED_PYTHON}`);
+      console.error(`  py -${RECOMMENDED_PYTHON} -m venv .\\backend\\.venv`);
+      console.error("  .\\backend\\.venv\\Scripts\\python.exe -m pip install --upgrade pip");
+      console.error("  .\\backend\\.venv\\Scripts\\python.exe -m pip install -r .\\backend\\requirements.txt");
+    } else {
+      console.error("  python3 -m venv ./backend/.venv");
+      console.error("  ./backend/.venv/bin/python -m pip install --upgrade pip");
+      console.error("  ./backend/.venv/bin/python -m pip install -r ./backend/requirements.txt");
+    }
   }
   console.error("\nThen run `npm run dev` again. Use `npm run dev:web` only if you intentionally want the frontend without SPLIT.\n");
 }
