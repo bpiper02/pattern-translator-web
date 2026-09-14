@@ -26,6 +26,7 @@ type LaneState = {
 };
 
 type SourcePattern = Record<LaneName, boolean[]>;
+type PreparedPlayer = { player: Tone.Player; url: string };
 
 type ResampleWorkspaceProps = {
   routedAsset?: ProjectAudioAsset | null;
@@ -93,11 +94,18 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   const voiceCaptureAbortRef = useRef<AbortController | null>(null);
   const routedAssetRef = useRef<string | null>(null);
   const extractGateRef = useRef(createOperationGate());
+  const renderGateRef = useRef(createOperationGate());
   const laneLoadGenerationRef = useRef<Record<LaneName, number>>(blankLaneLoadGeneration());
   const mountedRef = useRef(false);
 
   useEffect(() => { patternRef.current = lanes; }, [lanes]);
   useEffect(() => { sourcePatternRef.current = sourcePattern; }, [sourcePattern]);
+
+  function disposePrepared(prepared: PreparedPlayer | null | undefined) {
+    if (!prepared) return;
+    prepared.player.dispose();
+    URL.revokeObjectURL(prepared.url);
+  }
 
   function disposePlayer(name: LaneName) {
     playersRef.current.get(name)?.dispose();
@@ -107,13 +115,34 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     playerUrlsRef.current.delete(name);
   }
 
-  function stopSequencer() {
+  function commitPlayer(name: LaneName, prepared: PreparedPlayer) {
+    disposePlayer(name);
+    playersRef.current.set(name, prepared.player);
+    playerUrlsRef.current.set(name, prepared.url);
+  }
+
+  async function preparePlayer(file: File): Promise<PreparedPlayer> {
+    const url = URL.createObjectURL(file);
+    const player = new Tone.Player(url).toDestination();
+    try {
+      await Tone.loaded();
+      return { player, url };
+    } catch (error) {
+      player.dispose();
+      URL.revokeObjectURL(url);
+      throw error;
+    }
+  }
+
+  function stopSequencer(updateReactState = true) {
     const transport = Tone.getTransport();
     transport.stop();
     if (scheduleRef.current !== null) transport.clear(scheduleRef.current);
     scheduleRef.current = null;
-    setCurrentStep(-1);
-    setPlayingMode(null);
+    if (updateReactState) {
+      setCurrentStep(-1);
+      setPlayingMode(null);
+    }
   }
 
   function invalidateLaneLoads() {
@@ -125,8 +154,9 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     return () => {
       mountedRef.current = false;
       extractGateRef.current.invalidate();
+      renderGateRef.current.invalidate();
       invalidateLaneLoads();
-      stopSequencer();
+      stopSequencer(false);
       for (const lane of LANES) disposePlayer(lane);
       voiceCaptureAbortRef.current?.abort();
     };
@@ -155,6 +185,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   const voiceCaptureActive = recording || countIn !== null;
 
   function invalidateExport(next = "PATTERN CHANGED — LOOP KEEPS PLAYING; EXPORT WILL USE CURRENT STEPS") {
+    renderGateRef.current.invalidate();
     setRendered(null);
     setMessage(next);
   }
@@ -172,36 +203,26 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     setSourcePattern(next);
   }
 
-  async function installPlayer(name: LaneName, file: File) {
-    const url = URL.createObjectURL(file);
-    const player = new Tone.Player(url).toDestination();
-    try {
-      await Tone.loaded();
-    } catch (error) {
-      player.dispose();
-      URL.revokeObjectURL(url);
-      throw error;
-    }
-    disposePlayer(name);
-    playersRef.current.set(name, player);
-    playerUrlsRef.current.set(name, url);
-  }
-
   async function loadSample(name: LaneName, file: File) {
     extractGateRef.current.invalidate();
     setExtracting(false);
     const generation = ++laneLoadGenerationRef.current[name];
+    let prepared: PreparedPlayer | null = null;
     try {
       const buffer = await decodeAudio(file);
       if (!mountedRef.current || generation !== laneLoadGenerationRef.current[name]) return;
-      await installPlayer(name, file);
+      prepared = await preparePlayer(file);
       if (!mountedRef.current || generation !== laneLoadGenerationRef.current[name]) {
-        disposePlayer(name);
+        disposePrepared(prepared);
+        prepared = null;
         return;
       }
+      commitPlayer(name, prepared);
+      prepared = null;
       updateLanes((current) => current.map((lane) => lane.name === name ? { ...lane, file, buffer } : lane));
       invalidateExport(`${name} SAMPLE READY — LIVE LOOP CAN KEEP RUNNING`);
     } catch (error) {
+      disposePrepared(prepared);
       if (!mountedRef.current || generation !== laneLoadGenerationRef.current[name]) return;
       console.error(error);
       setMessage(`ERROR — COULD NOT LOAD ${name}`);
@@ -211,6 +232,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   async function extractStem(file: File) {
     const token = extractGateRef.current.begin();
     invalidateLaneLoads();
+    renderGateRef.current.invalidate();
     stopSequencer();
     setSourceStem(file);
     setExtracting(true);
@@ -220,6 +242,7 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     updateLanes((current) => current.map((lane) => ({ ...blankLane(lane.name), steps: [...lane.steps] })));
     setMessage("ANALYZING SOURCE + EXTRACTING KIT…");
 
+    const preparedPlayers = new Map<LaneName, PreparedPlayer>();
     try {
       const buffer = await decodeAudio(file);
       if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
@@ -232,12 +255,20 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
       for (const [name, sampleBuffer] of entries) {
         const blob = audioBufferToWav(sampleBuffer);
         const sampleFile = new File([blob], `${name.toLowerCase()}-auto.wav`, { type: "audio/wav" });
-        await installPlayer(name, sampleFile);
-        if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
+        const prepared = await preparePlayer(sampleFile);
+        if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) {
+          disposePrepared(prepared);
+          return;
+        }
+        preparedPlayers.set(name, prepared);
         extracted.set(name, { file: sampleFile, buffer: sampleBuffer });
       }
 
       if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
+      for (const lane of LANES) disposePlayer(lane);
+      for (const [name, prepared] of preparedPlayers) commitPlayer(name, prepared);
+      preparedPlayers.clear();
+
       updateLanes((current) => current.map((lane) => {
         const sample = extracted.get(lane.name);
         return sample ? { ...lane, file: sample.file, buffer: sample.buffer } : blankLane(lane.name);
@@ -253,6 +284,8 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
       updateSourcePattern(blankSourcePattern());
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "KIT EXTRACTION FAILED"}`);
     } finally {
+      for (const prepared of preparedPlayers.values()) disposePrepared(prepared);
+      preparedPlayers.clear();
       if (mountedRef.current && extractGateRef.current.isCurrent(token)) setExtracting(false);
     }
   }
@@ -303,7 +336,6 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     stopSequencer();
     await Tone.start();
     const transport = Tone.getTransport();
-    transport.cancel();
     transport.bpm.value = bpm;
     transport.position = 0;
     let step = 0;
@@ -336,20 +368,26 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   }
 
   async function buildWav() {
+    if (rendering) return;
     if (rendered) {
       setMessage(`WAV READY — ${rendered.duration.toFixed(1)} SEC`);
       return;
     }
+
+    const token = renderGateRef.current.begin();
+    const renderBpm = bpm;
+    const renderLanes = patternRef.current.map((lane) => ({ ...lane, steps: [...lane.steps] }));
     setRendering(true);
     setMessage("RENDERING 4-BAR WAV…");
     try {
-      const output = await renderPatternBuffer(patternRef.current, bpm, 4);
-      if (!mountedRef.current) return;
+      const output = await renderPatternBuffer(renderLanes, renderBpm, 4);
+      if (!mountedRef.current || !renderGateRef.current.isCurrent(token)) return;
       setRendered(output);
       setMessage(`WAV READY — ${output.duration.toFixed(1)} SEC`);
     } catch (error) {
+      if (!mountedRef.current || !renderGateRef.current.isCurrent(token)) return;
       console.error(error);
-      if (mountedRef.current) setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "RENDER FAILED"}`);
+      setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "RENDER FAILED"}`);
     } finally {
       if (mountedRef.current) setRendering(false);
     }
