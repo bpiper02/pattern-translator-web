@@ -4,6 +4,8 @@ import fs from "node:fs";
 const sampler = fs.readFileSync("src/components/ResampleWorkspace.tsx", "utf8");
 const splitterClient = fs.readFileSync("src/separation/client.ts", "utf8");
 const backend = fs.readFileSync("backend/app.py", "utf8");
+const separatorService = fs.readFileSync("backend/separator_service.py", "utf8");
+const ffmpegRuntime = fs.readFileSync("backend/ffmpeg_runtime.py", "utf8");
 const devScript = fs.readFileSync("scripts/dev.mjs", "utf8");
 const backendRequirements = fs.readFileSync("backend/requirements.txt", "utf8");
 
@@ -61,13 +63,19 @@ assert.ok(backendRevision, "backend must declare an API revision");
 assert.equal(devRevision, backendRevision, "launcher/backend splitter revisions must match");
 
 // The launcher must validate the actual Separator import chain, not merely the
-// top-level package, and the known upstream 0.47.0 audioread packaging hole is
-// pinned explicitly in our runtime contract.
+// top-level package. Known upstream runtime holes are pinned explicitly, and a
+// local FFmpeg binary must be provisioned before audio-separator is constructed.
+assert.match(devScript, /from backend\.ffmpeg_runtime import ensure_ffmpeg_runtime/);
+assert.match(devScript, /ffmpeg_exe = ensure_ffmpeg_runtime\(\)/);
 assert.match(devScript, /from audio_separator\.separator import Separator/);
-assert.match(devScript, /import fastapi, uvicorn, numpy, soundfile, drumsep, audioread/);
+assert.match(devScript, /import fastapi, uvicorn, numpy, soundfile, drumsep, audioread, subprocess/);
 assert.match(devScript, /EXPECTED_AUDIO_SEPARATOR = "0\.47\.0"/);
 assert.match(devScript, /version\('audio-separator'\)/);
 assert.match(backendRequirements, /^audio-separator\[cpu\]==0\.47\.0$/m);
 assert.match(backendRequirements, /^audioread==3\.1\.0$/m);
+assert.match(backendRequirements, /^imageio-ffmpeg==0\.6\.0$/m);
+assert.match(separatorService, /ensure_ffmpeg_runtime\(\)/);
+assert.match(ffmpegRuntime, /imageio_ffmpeg\.get_ffmpeg_exe\(\)/);
+assert.match(ffmpegRuntime, /shutil\.which\("ffmpeg"\)/);
 
 console.log("RUNTIME WORKFLOW REGRESSION: PASS");
