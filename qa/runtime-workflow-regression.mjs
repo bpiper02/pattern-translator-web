@@ -5,6 +5,7 @@ const sampler = fs.readFileSync("src/components/ResampleWorkspace.tsx", "utf8");
 const splitterClient = fs.readFileSync("src/separation/client.ts", "utf8");
 const backend = fs.readFileSync("backend/app.py", "utf8");
 const devScript = fs.readFileSync("scripts/dev.mjs", "utf8");
+const backendRequirements = fs.readFileSync("backend/requirements.txt", "utf8");
 
 // SAMPLE is an instrument: working preview must read mutable pattern state on
 // every 16th rather than playing a pre-rendered four-bar buffer.
@@ -51,7 +52,6 @@ assert.match(devScript, /health\?\.revision === EXPECTED_SPLITTER_REVISION/);
 assert.match(devScript, /backendState === "stale"/);
 assert.match(devScript, /uvicorn/);
 assert.match(devScript, /vite/);
-assert.match(devScript, /audio_separator/);
 assert.match(backend, /"revision": API_REVISION/);
 
 const devRevision = devScript.match(/EXPECTED_SPLITTER_REVISION = "([^"]+)"/)?.[1];
@@ -59,5 +59,15 @@ const backendRevision = backend.match(/API_REVISION = "([^"]+)"/)?.[1];
 assert.ok(devRevision, "dev launcher must declare an expected splitter revision");
 assert.ok(backendRevision, "backend must declare an API revision");
 assert.equal(devRevision, backendRevision, "launcher/backend splitter revisions must match");
+
+// The launcher must validate the actual Separator import chain, not merely the
+// top-level package, and the known upstream 0.47.0 audioread packaging hole is
+// pinned explicitly in our runtime contract.
+assert.match(devScript, /from audio_separator\.separator import Separator/);
+assert.match(devScript, /import fastapi, uvicorn, numpy, soundfile, drumsep, audioread/);
+assert.match(devScript, /EXPECTED_AUDIO_SEPARATOR = "0\.47\.0"/);
+assert.match(devScript, /version\('audio-separator'\)/);
+assert.match(backendRequirements, /^audio-separator\[cpu\]==0\.47\.0$/m);
+assert.match(backendRequirements, /^audioread==3\.1\.0$/m);
 
 console.log("RUNTIME WORKFLOW REGRESSION: PASS");
