@@ -1,8 +1,6 @@
 from pathlib import Path
 import runpy
-import tempfile
 
-from backend.runtime_tools import resolve_audio_separator_executable
 from backend.separation_profiles import (
     classify_broad,
     classify_drum,
@@ -62,10 +60,6 @@ drum_cases = {
 for name, expected in drum_cases.items():
     check(classify_drum(Path(name)), expected, name)
 
-# app.py consumes dataclass profiles. A previous regression converted the profile
-# definitions to dataclasses but left dictionary-style selected["..."] access in
-# the endpoint, which only failed at runtime. Keep the producer/consumer contract
-# checked in this dependency-free test.
 app_source = (Path(__file__).parents[1] / "backend" / "app.py").read_text(encoding="utf-8")
 if "selected[" in app_source:
     raise AssertionError("backend app must use typed profile attributes, not selected[...] dictionary access")
@@ -78,34 +72,15 @@ for token in (
     if token not in app_source:
         raise AssertionError(f"backend endpoint profile contract missing {token}")
 
-# The backend is launched by Node, so its process PATH does not necessarily
-# contain backend/.venv/Scripts. The separator must resolve beside the exact
-# interpreter running FastAPI before considering PATH.
-with tempfile.TemporaryDirectory() as tmp:
-    scripts = Path(tmp) / "Scripts"
-    scripts.mkdir()
-    fake_python = scripts / "python.exe"
-    fake_python.touch()
-    fake_separator = scripts / "audio-separator.exe"
-    fake_separator.touch()
-    resolved = resolve_audio_separator_executable(str(fake_python), which=lambda _: None)
-    check(Path(resolved), fake_separator.resolve(), "venv-local audio-separator resolution")
-
-fallback = resolve_audio_separator_executable(
-    "/missing/python",
-    which=lambda name: "/fallback/audio-separator" if name == "audio-separator" else None,
-)
-check(fallback, "/fallback/audio-separator", "PATH fallback separator resolution")
-
-for token in (
-    "resolve_audio_separator_executable(sys.executable)",
-    '"revision": API_REVISION',
-):
-    if token not in app_source:
-        raise AssertionError(f"backend runtime contract missing {token}")
+# The backend used to shell out through the audio-separator CLI, which caused
+# Windows PATH/console-script failures and hid the real exception behind CLI
+# logging.  The endpoint must now use the in-process service only.
+if "subprocess" in app_source or "resolve_audio_separator_executable" in app_source:
+    raise AssertionError("backend app must not shell out to audio-separator")
+if "from backend.separator_service import run_separator" not in app_source:
+    raise AssertionError("backend app must use the Python API separator service")
 
 print("SEPARATION PROFILE REGRESSION: PASS")
 
-# Keep backend policy checks in the same dependency-free CI step so storage
-# lifecycle regressions fail before heavyweight separator dependencies matter.
+runpy.run_path(Path(__file__).with_name("separator-service.py"), run_name="__main__")
 runpy.run_path(Path(__file__).with_name("job-storage.py"), run_name="__main__")
