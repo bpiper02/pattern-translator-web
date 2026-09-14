@@ -7,7 +7,6 @@ const isWindows = process.platform === "win32";
 const SPLITTER_URL = "http://127.0.0.1:8788";
 const CORS_PROBE_ORIGIN = "http://localhost:5174";
 const EXPECTED_SPLITTER_REVISION = "split-runtime-v4-jobs";
-const EXPECTED_PIPELINE_REVISION = "split-pipeline-v1";
 const EXPECTED_AUDIO_SEPARATOR = "0.47.0";
 const RECOMMENDED_PYTHON = "3.12";
 const MAX_SUPPORTED_PYTHON_MINOR = 13;
@@ -45,6 +44,9 @@ function inspectPython(candidate) {
 }
 
 function findBackendPython() {
+  // Validate the real runtime contract before the UI opens: imports, exact
+  // audio-separator version, and a working ffmpeg executable. The helper also
+  // exercises our bundled imageio-ffmpeg fallback when no system ffmpeg exists.
   const runtimeProbe = [
     "import fastapi, uvicorn, numpy, soundfile, drumsep, audioread, subprocess",
     "from backend.ffmpeg_runtime import ensure_ffmpeg_runtime",
@@ -88,11 +90,7 @@ async function probeSplitter() {
     const allowedOrigin = response.headers.get("access-control-allow-origin");
     if (allowedOrigin !== CORS_PROBE_ORIGIN) return "stale";
     const health = await response.json().catch(() => null);
-    return health?.revision === EXPECTED_SPLITTER_REVISION
-      && health?.pipelineRevision === EXPECTED_PIPELINE_REVISION
-      && health?.jobApi === true
-      ? "current"
-      : "stale";
+    return health?.revision === EXPECTED_SPLITTER_REVISION && health?.jobApi === true ? "current" : "stale";
   } catch {
     return "offline";
   } finally {
