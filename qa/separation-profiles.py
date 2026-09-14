@@ -1,6 +1,8 @@
 from pathlib import Path
 import runpy
+import tempfile
 
+from backend.runtime_tools import resolve_audio_separator_executable
 from backend.separation_profiles import (
     classify_broad,
     classify_drum,
@@ -75,6 +77,32 @@ for token in (
 ):
     if token not in app_source:
         raise AssertionError(f"backend endpoint profile contract missing {token}")
+
+# The backend is launched by Node, so its process PATH does not necessarily
+# contain backend/.venv/Scripts. The separator must resolve beside the exact
+# interpreter running FastAPI before considering PATH.
+with tempfile.TemporaryDirectory() as tmp:
+    scripts = Path(tmp) / "Scripts"
+    scripts.mkdir()
+    fake_python = scripts / "python.exe"
+    fake_python.touch()
+    fake_separator = scripts / "audio-separator.exe"
+    fake_separator.touch()
+    resolved = resolve_audio_separator_executable(str(fake_python), which=lambda _: None)
+    check(Path(resolved), fake_separator.resolve(), "venv-local audio-separator resolution")
+
+fallback = resolve_audio_separator_executable(
+    "/missing/python",
+    which=lambda name: "/fallback/audio-separator" if name == "audio-separator" else None,
+)
+check(fallback, "/fallback/audio-separator", "PATH fallback separator resolution")
+
+for token in (
+    "resolve_audio_separator_executable(sys.executable)",
+    '"revision": API_REVISION',
+):
+    if token not in app_source:
+        raise AssertionError(f"backend runtime contract missing {token}")
 
 print("SEPARATION PROFILE REGRESSION: PASS")
 
