@@ -21,10 +21,11 @@ function pythonCandidates() {
 }
 
 function findBackendPython() {
+  const imports = "import fastapi, uvicorn, numpy, soundfile, drumsep, audio_separator";
   for (const candidate of pythonCandidates()) {
     const check = spawnSync(
       candidate.command,
-      [...candidate.prefix, "-c", "import fastapi, uvicorn"],
+      [...candidate.prefix, "-c", imports],
       { cwd: root, stdio: "ignore", shell: false },
     );
     if (check.status === 0) return candidate;
@@ -32,19 +33,32 @@ function findBackendPython() {
   return null;
 }
 
-const python = findBackendPython();
-if (!python) {
+async function splitterAlreadyRunning() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 900);
+  try {
+    const response = await fetch("http://127.0.0.1:8788/health", { signal: controller.signal });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function printSetupHelp() {
   console.error("\nCHOPSTICKS DEV: splitter backend environment is not ready.\n");
   console.error("From the repo root run:");
   if (isWindows) {
     console.error("  py -3.12 -m venv .\\backend\\.venv");
+    console.error("  .\\backend\\.venv\\Scripts\\python.exe -m pip install --upgrade pip");
     console.error("  .\\backend\\.venv\\Scripts\\python.exe -m pip install -r .\\backend\\requirements.txt");
   } else {
     console.error("  python3 -m venv ./backend/.venv");
+    console.error("  ./backend/.venv/bin/python -m pip install --upgrade pip");
     console.error("  ./backend/.venv/bin/python -m pip install -r ./backend/requirements.txt");
   }
-  console.error("\nUse `npm run dev:web` only if you intentionally want the frontend without SPLIT.\n");
-  process.exit(1);
+  console.error("\nThen run `npm run dev` again. Use `npm run dev:web` only if you intentionally want the frontend without SPLIT.\n");
 }
 
 const children = [];
@@ -83,12 +97,22 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
-console.log("CHOPSTICKS DEV: starting splitter on http://127.0.0.1:8788");
-launch(
-  python.command,
-  [...python.prefix, "-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8788"],
-  "Splitter backend",
-);
+const backendRunning = await splitterAlreadyRunning();
+if (backendRunning) {
+  console.log("CHOPSTICKS DEV: splitter already healthy on http://127.0.0.1:8788");
+} else {
+  const python = findBackendPython();
+  if (!python) {
+    printSetupHelp();
+    process.exit(1);
+  }
+  console.log("CHOPSTICKS DEV: starting splitter on http://127.0.0.1:8788");
+  launch(
+    python.command,
+    [...python.prefix, "-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8788"],
+    "Splitter backend",
+  );
+}
 
 const npx = isWindows ? "npx.cmd" : "npx";
 console.log("CHOPSTICKS DEV: starting Vite frontend");
