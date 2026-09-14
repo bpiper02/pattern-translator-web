@@ -9,7 +9,6 @@ from pathlib import Path
 class FullMixProfile:
     name: str
     broad_model: str
-    demucs_shifts: int
     vocal_model: str | None = None
     vocal_ensemble_preset: str | None = None
 
@@ -23,19 +22,17 @@ class DrumProfile:
 
 FULL_MIX_PROFILES = {
     # Balanced is the normal-laptop path. The standard htdemucs model is a
-    # little less accurate than htdemucs_ft but avoids the fine-tuned model bag,
-    # and zero shift augmentation avoids multiplying CPU inference passes.
+    # little less accurate than htdemucs_ft but avoids its expensive fine-tuned
+    # model bag. The service also disables shift augmentation for this model.
     "balanced": FullMixProfile(
         name="balanced",
         broad_model=os.getenv("PT_BALANCED_BROAD_MODEL", "htdemucs.yaml"),
-        demucs_shifts=max(0, int(os.getenv("PT_BALANCED_DEMUCS_SHIFTS", "0"))),
     ),
     # HQ remix deliberately spends more compute: curated RoFormer vocals first,
-    # then the stronger fine-tuned Demucs broad split with one shift pass.
+    # then the stronger fine-tuned Demucs broad split.
     "hq": FullMixProfile(
         name="hq",
         broad_model=os.getenv("PT_HQ_BROAD_MODEL", "htdemucs_ft.yaml"),
-        demucs_shifts=max(0, int(os.getenv("PT_HQ_DEMUCS_SHIFTS", "1"))),
         vocal_ensemble_preset=os.getenv("PT_VOCAL_ENSEMBLE", "vocal_balanced"),
     ),
 }
