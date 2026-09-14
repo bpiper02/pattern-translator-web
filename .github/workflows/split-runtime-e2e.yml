@@ -17,6 +17,10 @@ on:
       - "package-lock.json"
   workflow_dispatch:
 
+concurrency:
+  group: split-runtime-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-real-model:
     name: Windows MP3 → real Demucs → 4 WAVs
