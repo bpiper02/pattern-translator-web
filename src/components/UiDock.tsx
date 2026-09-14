@@ -108,8 +108,8 @@ export function UiDock() {
             <div className="uiDockInfo">
               <p><b>CRATE</b> keeps your source and derived sounds available while this browser session is open. Ejecting a tool does not delete its Crate copy.</p>
               <p><b>TRANSFORM</b> changes BPM and pitch/key. Whole mixes can smear on larger key shifts; split stems first when you need cleaner control.</p>
-              <p><b>SPLIT</b> uses the configured separator backend. HQ modes can take longer and may download large model files on the backend machine.</p>
-              <p><b>SAMPLE</b> builds a kit and groove from audio. Working preview and WAV export use the same rendered audio buffer.</p>
+              <p><b>SPLIT</b> uses the local separator backend. HQ modes can take longer and may download large model files on the backend machine.</p>
+              <p><b>SAMPLE</b> uses a live editable loop for preview. WAV export is rendered separately from the current pattern when you build it.</p>
               <p><b>VOICE → MIDI</b> works best with one clear hummed/sung note at a time, no backing track, in a quiet room.</p>
             </div>
           ) : (
