@@ -60,6 +60,22 @@ drum_cases = {
 for name, expected in drum_cases.items():
     check(classify_drum(Path(name)), expected, name)
 
+# app.py consumes dataclass profiles. A previous regression converted the profile
+# definitions to dataclasses but left dictionary-style selected["..."] access in
+# the endpoint, which only failed at runtime. Keep the producer/consumer contract
+# checked in this dependency-free test.
+app_source = (Path(__file__).parents[1] / "backend" / "app.py").read_text(encoding="utf-8")
+if "selected[" in app_source:
+    raise AssertionError("backend app must use typed profile attributes, not selected[...] dictionary access")
+for token in (
+    "selected.name",
+    "selected.broad_model",
+    "selected.vocal_ensemble_preset",
+    "selected.model",
+):
+    if token not in app_source:
+        raise AssertionError(f"backend endpoint profile contract missing {token}")
+
 print("SEPARATION PROFILE REGRESSION: PASS")
 
 # Keep backend policy checks in the same dependency-free CI step so storage
