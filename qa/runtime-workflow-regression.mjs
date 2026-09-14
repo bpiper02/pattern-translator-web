@@ -42,15 +42,19 @@ assert.match(splitterClient, /\/health/);
 assert.match(splitterClient, /Splitter backend unavailable/);
 
 // `npm run dev` is a full-app command. The launcher must probe the splitter,
-// verify dynamic-port CORS compatibility, reject stale servers, and launch
-// both backend and Vite when the backend is offline.
+// verify dynamic-port CORS compatibility and the backend code revision, reject
+// stale servers, and launch both backend and Vite when the backend is offline.
 assert.match(devScript, /SPLITTER_URL = "http:\/\/127\.0\.0\.1:8788"/);
 assert.match(devScript, /CORS_PROBE_ORIGIN = "http:\/\/localhost:5174"/);
+assert.match(devScript, /EXPECTED_SPLITTER_REVISION = "split-runtime-v2"/);
 assert.match(devScript, /\$\{SPLITTER_URL\}\/health/);
 assert.match(devScript, /access-control-allow-origin/);
+assert.match(devScript, /health\?\.revision === EXPECTED_SPLITTER_REVISION/);
 assert.match(devScript, /backendState === "stale"/);
 assert.match(devScript, /uvicorn/);
 assert.match(devScript, /vite/);
 assert.match(devScript, /audio_separator/);
+assert.match(backend, /API_REVISION = "split-runtime-v2"/);
+assert.match(backend, /"revision": API_REVISION/);
 
 console.log("RUNTIME WORKFLOW REGRESSION: PASS");
