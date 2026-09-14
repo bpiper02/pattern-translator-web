@@ -14,6 +14,7 @@ const venvPython = path.join(
   ".venv",
   isWindows ? "Scripts/python.exe" : "bin/python",
 );
+const viteEntry = path.join(root, "node_modules", "vite", "bin", "vite.js");
 
 function pythonCandidates() {
   const candidates = [];
@@ -157,6 +158,12 @@ if (backendState === "current") {
   );
 }
 
-const npx = isWindows ? "npx.cmd" : "npx";
-console.log("CHOPSTICKS DEV: starting Vite frontend");
-launch(npx, ["vite"], "Vite frontend");
+if (!existsSync(viteEntry)) {
+  console.error("CHOPSTICKS DEV: Vite is not installed. Run `npm install` and try again.");
+  shutdown(1);
+} else {
+  // Launch Vite with the current Node executable instead of npx.cmd. On
+  // Windows + Node 24, spawning .cmd shims with shell:false can throw EINVAL.
+  console.log("CHOPSTICKS DEV: starting Vite frontend");
+  launch(process.execPath, [viteEntry], "Vite frontend");
+}
