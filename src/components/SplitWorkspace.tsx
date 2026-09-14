@@ -17,6 +17,7 @@ import {
 import { createOperationGate, type OperationGate, type OperationToken } from "../state/operationGate";
 
 type SplitMode = "full" | "drums";
+type DownloadedStem = { stem: SplitStem; file: File };
 
 type SplitWorkspaceProps = {
   assets: ProjectAudioAsset[];
@@ -129,14 +130,17 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
     return onAddAsset({ file: nextFile, kind: sourceKind(operationMode), label: nextFile.name, origin: "upload" });
   }
 
-  async function publishStems(resultStems: SplitStem[], parentId: string, gate: OperationGate, token: OperationToken) {
-    // Download all returned stems before mutating the Crate. If one output is
-    // inaccessible, fail atomically instead of publishing a half-complete set.
-    const files = await Promise.all(resultStems.map(async (stem) => ({ stem, file: await stemUrlToFile(stem) })));
-    if (!mountedRef.current || !gate.isCurrent(token)) return [];
+  async function downloadStems(resultStems: SplitStem[], gate: OperationGate, token: OperationToken) {
+    const downloaded = await Promise.all(
+      resultStems.map(async (stem): Promise<DownloadedStem> => ({ stem, file: await stemUrlToFile(stem) })),
+    );
+    return mountedRef.current && gate.isCurrent(token) ? downloaded : [];
+  }
 
+  function publishDownloadedStems(downloaded: DownloadedStem[], parentId: string, gate: OperationGate, token: OperationToken) {
+    if (!mountedRef.current || !gate.isCurrent(token)) return [];
     const published: ProjectAudioAsset[] = [];
-    for (const { stem, file: stemFile } of files) {
+    for (const { stem, file: stemFile } of downloaded) {
       if (!mountedRef.current || !gate.isCurrent(token)) return published;
       published.push(onAddAsset({ file: stemFile, kind: stem.kind, label: stem.label, origin: "split", parentId }));
     }
@@ -164,20 +168,22 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
       : operationDrumProfile === "hq" ? "HQ DRUM SPLIT — MDX23C…" : "SPLITTING DRUM AUDIO…");
 
     try {
-      // Do the expensive/networked work first. A failed request must not leave
-      // a ghost source asset in the Crate.
       const result = operationMode === "full"
         ? await splitFullMix(nextFile, operationFullProfile)
         : await splitDrumStem(nextFile, operationDrumProfile);
       if (!mountedRef.current || !splitGateRef.current.isCurrent(token)) return;
 
+      // Fetch every returned WAV before committing any new Crate objects. This
+      // makes backend/network failure a clean no-op for project state.
+      const downloaded = await downloadStems(result.stems, splitGateRef.current, token);
+      if (!mountedRef.current || !splitGateRef.current.isCurrent(token) || downloaded.length !== result.stems.length) return;
+
       const sourceAsset = registerSource(nextFile, operationMode, existingAsset);
       if (!splitGateRef.current.isCurrent(token)) return;
-      setSourceAssetId(sourceAsset.id);
-
-      const published = await publishStems(result.stems, sourceAsset.id, splitGateRef.current, token);
+      const published = publishDownloadedStems(downloaded, sourceAsset.id, splitGateRef.current, token);
       if (!mountedRef.current || !splitGateRef.current.isCurrent(token)) return;
 
+      setSourceAssetId(sourceAsset.id);
       if (operationMode === "full") setStems(result.stems);
       else setDrumSubstems(result.stems);
       const publishedDrums = published.find((asset) => asset.kind === "drums");
@@ -221,7 +227,9 @@ export function SplitWorkspace({ assets, onAddAsset }: SplitWorkspaceProps) {
       if (!mountedRef.current || !drumGateRef.current.isCurrent(token)) return;
       const result = await splitDrumStem(drumFile, operationDrumProfile);
       if (!mountedRef.current || !drumGateRef.current.isCurrent(token)) return;
-      await publishStems(result.stems, operationParentId, drumGateRef.current, token);
+      const downloaded = await downloadStems(result.stems, drumGateRef.current, token);
+      if (!mountedRef.current || !drumGateRef.current.isCurrent(token) || downloaded.length !== result.stems.length) return;
+      publishDownloadedStems(downloaded, operationParentId, drumGateRef.current, token);
       if (!mountedRef.current || !drumGateRef.current.isCurrent(token)) return;
 
       setDrumSubstems(result.stems);
