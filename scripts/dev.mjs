@@ -44,10 +44,14 @@ function inspectPython(candidate) {
 }
 
 function findBackendPython() {
-  // Import the real Separator class, not merely the top-level package. This
-  // catches missing runtime dependencies before the UI starts.
+  // Validate the real runtime contract before the UI opens: imports, exact
+  // audio-separator version, and a working ffmpeg executable. The helper also
+  // exercises our bundled imageio-ffmpeg fallback when no system ffmpeg exists.
   const runtimeProbe = [
-    "import fastapi, uvicorn, numpy, soundfile, drumsep, audioread",
+    "import fastapi, uvicorn, numpy, soundfile, drumsep, audioread, subprocess",
+    "from backend.ffmpeg_runtime import ensure_ffmpeg_runtime",
+    "ffmpeg_exe = ensure_ffmpeg_runtime()",
+    "subprocess.run([str(ffmpeg_exe), '-version'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)",
     "from audio_separator.separator import Separator",
     "from importlib.metadata import version",
     `assert version('audio-separator') == '${EXPECTED_AUDIO_SEPARATOR}', version('audio-separator')`,
@@ -167,7 +171,7 @@ process.on("SIGTERM", () => shutdown(0));
 
 // Validate the exact Python runtime first, even if a backend is already alive.
 // This prevents a superficially healthy /health response from hiding a broken
-// Separator import chain in the current venv.
+// Separator or FFmpeg runtime in the current venv.
 const python = findBackendPython();
 if (!python) {
   printSetupHelp();
