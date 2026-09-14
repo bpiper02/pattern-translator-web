@@ -1,17 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Download, Mic, Pause, Play, Scissors, Square, Upload } from "lucide-react";
+import * as Tone from "tone";
 import { decodeAudio, monoSamples, type DrumHit } from "../audio";
 import { quantizeRhythmCapture } from "../analysis/rhythmCapture";
 import { detectVoiceRhythmOnsets } from "../analysis/voiceRhythm";
 import { recordOneBarRhythm } from "../audio/captureRhythm";
 import { audioBufferToWav } from "../audio/wav";
 import { extractAutoDrumKit, type AutoKitLane } from "../audio/autoDrumKit";
-import {
-  playPatternBuffer,
-  playPatternSample,
-  renderPatternBuffer,
-  type PatternPlayback,
-} from "../audio/patternRender";
+import { renderPatternBuffer } from "../audio/patternRender";
 import { drumsMidi } from "../midi";
 import type { ProjectAudioAsset } from "../project/assets";
 import { createOperationGate } from "../state/operationGate";
@@ -30,6 +26,7 @@ type LaneState = {
 };
 
 type SourcePattern = Record<LaneName, boolean[]>;
+type PreparedPlayer = { player: Tone.Player; url: string };
 
 type ResampleWorkspaceProps = {
   routedAsset?: ProjectAudioAsset | null;
@@ -87,42 +84,82 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   const [countIn, setCountIn] = useState<number | null>(null);
   const [processingVoice, setProcessingVoice] = useState(false);
   const [voiceLane, setVoiceLane] = useState<LaneName>("KICK");
-  const [message, setMessage] = useState("DROP ONE DRUM STEM TO BUILD A KIT, OR LOAD YOUR OWN ONE-SHOTS");
+  const [message, setMessage] = useState("DROP AUDIO TO BUILD A KIT, OR LOAD YOUR OWN ONE-SHOTS");
 
-  const patternPlaybackRef = useRef<PatternPlayback | null>(null);
-  const auditionPlaybackRef = useRef<PatternPlayback | null>(null);
-  const playheadTimerRef = useRef<number | null>(null);
-  const renderTicketRef = useRef(0);
+  const playersRef = useRef<Map<LaneName, Tone.Player>>(new Map());
+  const playerUrlsRef = useRef<Map<LaneName, string>>(new Map());
+  const scheduleRef = useRef<number | null>(null);
+  const patternRef = useRef(lanes);
+  const sourcePatternRef = useRef(sourcePattern);
   const voiceCaptureAbortRef = useRef<AbortController | null>(null);
   const routedAssetRef = useRef<string | null>(null);
   const extractGateRef = useRef(createOperationGate());
+  const renderGateRef = useRef(createOperationGate());
   const laneLoadGenerationRef = useRef<Record<LaneName, number>>(blankLaneLoadGeneration());
-  const mountedRef = useRef(true);
+  const mountedRef = useRef(false);
 
-  function stopPatternPlayback() {
-    patternPlaybackRef.current?.stop();
-    patternPlaybackRef.current = null;
-    if (playheadTimerRef.current !== null) {
-      window.clearInterval(playheadTimerRef.current);
-      playheadTimerRef.current = null;
+  useEffect(() => { patternRef.current = lanes; }, [lanes]);
+  useEffect(() => { sourcePatternRef.current = sourcePattern; }, [sourcePattern]);
+
+  function disposePrepared(prepared: PreparedPlayer | null | undefined) {
+    if (!prepared) return;
+    prepared.player.dispose();
+    URL.revokeObjectURL(prepared.url);
+  }
+
+  function disposePlayer(name: LaneName) {
+    playersRef.current.get(name)?.dispose();
+    playersRef.current.delete(name);
+    const url = playerUrlsRef.current.get(name);
+    if (url) URL.revokeObjectURL(url);
+    playerUrlsRef.current.delete(name);
+  }
+
+  function commitPlayer(name: LaneName, prepared: PreparedPlayer) {
+    disposePlayer(name);
+    playersRef.current.set(name, prepared.player);
+    playerUrlsRef.current.set(name, prepared.url);
+  }
+
+  async function preparePlayer(file: File): Promise<PreparedPlayer> {
+    const url = URL.createObjectURL(file);
+    const player = new Tone.Player(url).toDestination();
+    try {
+      await Tone.loaded();
+      return { player, url };
+    } catch (error) {
+      player.dispose();
+      URL.revokeObjectURL(url);
+      throw error;
     }
-    setCurrentStep(-1);
-    setPlayingMode(null);
+  }
+
+  function stopSequencer(updateReactState = true) {
+    const transport = Tone.getTransport();
+    transport.stop();
+    if (scheduleRef.current !== null) transport.clear(scheduleRef.current);
+    scheduleRef.current = null;
+    if (updateReactState) {
+      setCurrentStep(-1);
+      setPlayingMode(null);
+    }
   }
 
   function invalidateLaneLoads() {
     for (const lane of LANES) laneLoadGenerationRef.current[lane] += 1;
   }
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    extractGateRef.current.invalidate();
-    invalidateLaneLoads();
-    renderTicketRef.current++;
-    patternPlaybackRef.current?.stop();
-    auditionPlaybackRef.current?.stop();
-    if (playheadTimerRef.current !== null) window.clearInterval(playheadTimerRef.current);
-    voiceCaptureAbortRef.current?.abort();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      extractGateRef.current.invalidate();
+      renderGateRef.current.invalidate();
+      invalidateLaneLoads();
+      stopSequencer(false);
+      for (const lane of LANES) disposePlayer(lane);
+      voiceCaptureAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -147,23 +184,45 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   );
   const voiceCaptureActive = recording || countIn !== null;
 
-  function invalidate(next = "PATTERN CHANGED — PREVIEW / EXPORT WILL USE CURRENT STEPS") {
-    renderTicketRef.current++;
-    stopPatternPlayback();
+  function invalidateExport(next = "PATTERN CHANGED — LOOP KEEPS PLAYING; EXPORT WILL USE CURRENT STEPS") {
+    renderGateRef.current.invalidate();
     setRendered(null);
     setMessage(next);
+  }
+
+  function updateLanes(updater: (current: LaneState[]) => LaneState[]) {
+    setLanes((current) => {
+      const next = updater(current);
+      patternRef.current = next;
+      return next;
+    });
+  }
+
+  function updateSourcePattern(next: SourcePattern) {
+    sourcePatternRef.current = next;
+    setSourcePattern(next);
   }
 
   async function loadSample(name: LaneName, file: File) {
     extractGateRef.current.invalidate();
     setExtracting(false);
     const generation = ++laneLoadGenerationRef.current[name];
+    let prepared: PreparedPlayer | null = null;
     try {
       const buffer = await decodeAudio(file);
       if (!mountedRef.current || generation !== laneLoadGenerationRef.current[name]) return;
-      setLanes((current) => current.map((lane) => lane.name === name ? { ...lane, file, buffer } : lane));
-      invalidate(`${name} SAMPLE READY — CLICK STEPS OR USE VOICE INPUT`);
+      prepared = await preparePlayer(file);
+      if (!mountedRef.current || generation !== laneLoadGenerationRef.current[name]) {
+        disposePrepared(prepared);
+        prepared = null;
+        return;
+      }
+      commitPlayer(name, prepared);
+      prepared = null;
+      updateLanes((current) => current.map((lane) => lane.name === name ? { ...lane, file, buffer } : lane));
+      invalidateExport(`${name} SAMPLE READY — LIVE LOOP CAN KEEP RUNNING`);
     } catch (error) {
+      disposePrepared(prepared);
       if (!mountedRef.current || generation !== laneLoadGenerationRef.current[name]) return;
       console.error(error);
       setMessage(`ERROR — COULD NOT LOAD ${name}`);
@@ -173,17 +232,17 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
   async function extractStem(file: File) {
     const token = extractGateRef.current.begin();
     invalidateLaneLoads();
-    renderTicketRef.current++;
-    stopPatternPlayback();
-    auditionPlaybackRef.current?.stop();
+    renderGateRef.current.invalidate();
+    stopSequencer();
     setSourceStem(file);
     setExtracting(true);
     setRendered(null);
-    setSourcePattern(blankSourcePattern());
-    // A whole-source extraction owns the auto kit. Clear old source samples now
-    // so a lane missing from the new source can never leak in from the old kit.
-    setLanes((current) => current.map((lane) => ({ ...blankLane(lane.name), steps: [...lane.steps] })));
+    updateSourcePattern(blankSourcePattern());
+    for (const lane of LANES) disposePlayer(lane);
+    updateLanes((current) => current.map((lane) => ({ ...blankLane(lane.name), steps: [...lane.steps] })));
     setMessage("ANALYZING SOURCE + EXTRACTING KIT…");
+
+    const preparedPlayers = new Map<LaneName, PreparedPlayer>();
     try {
       const buffer = await decodeAudio(file);
       if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
@@ -195,79 +254,76 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
       const extracted = new Map<LaneName, { file: File; buffer: AudioBuffer }>();
       for (const [name, sampleBuffer] of entries) {
         const blob = audioBufferToWav(sampleBuffer);
-        extracted.set(name, {
-          file: new File([blob], `${name.toLowerCase()}-auto.wav`, { type: "audio/wav" }),
-          buffer: sampleBuffer,
-        });
+        const sampleFile = new File([blob], `${name.toLowerCase()}-auto.wav`, { type: "audio/wav" });
+        const prepared = await preparePlayer(sampleFile);
+        if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) {
+          disposePrepared(prepared);
+          return;
+        }
+        preparedPlayers.set(name, prepared);
+        extracted.set(name, { file: sampleFile, buffer: sampleBuffer });
       }
-      if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
 
-      setLanes((current) => current.map((lane) => {
+      if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
+      for (const lane of LANES) disposePlayer(lane);
+      for (const [name, prepared] of preparedPlayers) commitPlayer(name, prepared);
+      preparedPlayers.clear();
+
+      updateLanes((current) => current.map((lane) => {
         const sample = extracted.get(lane.name);
-        return sample
-          ? { ...lane, file: sample.file, buffer: sample.buffer }
-          : blankLane(lane.name);
+        return sample ? { ...lane, file: sample.file, buffer: sample.buffer } : blankLane(lane.name);
       }));
-      setSourcePattern(result.sourcePattern as SourcePattern);
+      updateSourcePattern(result.sourcePattern as SourcePattern);
       const detail = LANES.map((name) => `${name}:${result.counts[name]}`).join("  ");
       setMessage(`AUTO KIT + SOURCE GRID READY — ${result.totalOnsets} ONSETS // ${detail}`);
     } catch (error) {
       if (!mountedRef.current || !extractGateRef.current.isCurrent(token)) return;
       console.error(error);
-      setLanes(LANES.map(blankLane));
-      setSourcePattern(blankSourcePattern());
+      for (const lane of LANES) disposePlayer(lane);
+      updateLanes(() => LANES.map(blankLane));
+      updateSourcePattern(blankSourcePattern());
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "KIT EXTRACTION FAILED"}`);
     } finally {
+      for (const prepared of preparedPlayers.values()) disposePrepared(prepared);
+      preparedPlayers.clear();
       if (mountedRef.current && extractGateRef.current.isCurrent(token)) setExtracting(false);
     }
   }
 
-  function audition(name: LaneName) {
-    const lane = lanes.find((item) => item.name === name);
-    if (!lane?.buffer) return;
-    auditionPlaybackRef.current?.stop();
-    auditionPlaybackRef.current = playPatternSample(lane.buffer);
+  async function audition(name: LaneName) {
+    const player = playersRef.current.get(name);
+    if (!player) return;
+    await Tone.start();
+    player.start();
   }
 
   function toggleStep(name: LaneName, step: number) {
-    setLanes((current) => current.map((lane) => lane.name === name ? {
+    updateLanes((current) => current.map((lane) => lane.name === name ? {
       ...lane,
       steps: lane.steps.map((value, index) => index === step ? !value : value),
     } : lane));
-    invalidate();
+    invalidateExport();
   }
 
   function copySourcePattern() {
-    setLanes((current) => current.map((lane) => ({
+    updateLanes((current) => current.map((lane) => ({
       ...lane,
-      steps: [...sourcePattern[lane.name]],
+      steps: [...sourcePatternRef.current[lane.name]],
     })));
-    invalidate("SOURCE PATTERN COPIED — EDIT ANY AMBER STEP");
+    invalidateExport("SOURCE PATTERN COPIED — EDIT IT WHILE THE LOOP RUNS");
   }
 
   function clearPattern() {
-    setLanes((current) => current.map((lane) => ({ ...lane, steps: Array(STEPS).fill(false) })));
-    invalidate("WORKING PATTERN CLEARED — SOURCE MARKERS ARE STILL VISIBLE");
-  }
-
-  function startPlayhead() {
-    if (playheadTimerRef.current !== null) window.clearInterval(playheadTimerRef.current);
-    const stepMs = 60_000 / bpm / 4;
-    let step = 0;
-    setCurrentStep(step);
-    playheadTimerRef.current = window.setInterval(() => {
-      step = (step + 1) % STEPS;
-      setCurrentStep(step);
-    }, stepMs);
+    updateLanes((current) => current.map((lane) => ({ ...lane, steps: Array(STEPS).fill(false) })));
+    invalidateExport("WORKING PATTERN CLEARED — LIVE LOOP REMAINS ACTIVE");
   }
 
   async function togglePlayback(mode: PreviewMode) {
     if (playingMode === mode) {
-      stopPatternPlayback();
-      setMessage(mode === "source" ? "SOURCE PREVIEW STOPPED" : "WORKING PREVIEW STOPPED");
+      stopSequencer();
+      setMessage(mode === "source" ? "SOURCE PREVIEW STOPPED" : "WORKING LOOP STOPPED");
       return;
     }
-
     if (!loadedCount) {
       setMessage("EXTRACT OR LOAD AT LEAST ONE SAMPLE FIRST");
       return;
@@ -277,84 +333,81 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
       return;
     }
 
-    stopPatternPlayback();
-    const ticket = ++renderTicketRef.current;
-    const playbackContext = new AudioContext();
-    void playbackContext.resume();
-    setRendering(true);
-    setMessage(mode === "source" ? "RENDERING EXACT SOURCE PREVIEW…" : "RENDERING EXACT WORKING PREVIEW…");
+    stopSequencer();
+    await Tone.start();
+    const transport = Tone.getTransport();
+    transport.bpm.value = bpm;
+    transport.position = 0;
+    let step = 0;
 
-    try {
-      const renderLanes = mode === "source"
-        ? lanes.map((lane) => ({ ...lane, steps: [...sourcePattern[lane.name]] }))
-        : lanes;
-      const output = mode === "working" && rendered
-        ? rendered
-        : await renderPatternBuffer(renderLanes, bpm, 4);
-      if (ticket !== renderTicketRef.current) {
-        void playbackContext.close();
-        return;
+    scheduleRef.current = transport.scheduleRepeat((time) => {
+      const activeStep = step % STEPS;
+      const livePattern = patternRef.current;
+      const liveSource = sourcePatternRef.current;
+      for (const lane of livePattern) {
+        const enabled = mode === "source"
+          ? liveSource[lane.name][activeStep]
+          : lane.steps[activeStep];
+        if (enabled) playersRef.current.get(lane.name)?.start(time);
       }
-      if (mode === "working" && output !== rendered) setRendered(output);
+      Tone.getDraw().schedule(() => {
+        if (mountedRef.current) setCurrentStep(activeStep);
+      }, time);
+      step += 1;
+    }, "16n");
 
-      patternPlaybackRef.current = playPatternBuffer(output, () => {
-        patternPlaybackRef.current = null;
-        if (playheadTimerRef.current !== null) {
-          window.clearInterval(playheadTimerRef.current);
-          playheadTimerRef.current = null;
-        }
-        setCurrentStep(-1);
-        setPlayingMode(null);
-        setMessage(mode === "source" ? "SOURCE PREVIEW COMPLETE" : "WORKING PREVIEW COMPLETE — SAME BUFFER READY TO EXPORT");
-      }, playbackContext);
-      startPlayhead();
-      setPlayingMode(mode);
-      setMessage(mode === "source" ? "PLAYING EXACT RENDERED SOURCE" : "PLAYING EXACT EXPORT BUFFER");
-    } catch (error) {
-      void playbackContext.close();
-      console.error(error);
-      setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "PREVIEW RENDER FAILED"}`);
-    } finally {
-      if (ticket === renderTicketRef.current) setRendering(false);
-    }
+    transport.start();
+    setPlayingMode(mode);
+    setMessage(mode === "source" ? "PLAYING SOURCE GROOVE" : "LIVE WORKING LOOP — EDIT STEPS WHILE IT PLAYS");
+  }
+
+  function changeBpm(value: number) {
+    setBpm(value);
+    if (playingMode) Tone.getTransport().bpm.rampTo(value, 0.03);
+    invalidateExport("BPM CHANGED — LIVE LOOP UPDATED; RE-EXTRACT IF SOURCE GRID LOOKS OFF");
   }
 
   async function buildWav() {
+    if (rendering) return;
     if (rendered) {
-      setMessage(`WAV READY — ${rendered.duration.toFixed(1)} SEC // SAME BUFFER AS WORKING PREVIEW`);
+      setMessage(`WAV READY — ${rendered.duration.toFixed(1)} SEC`);
       return;
     }
-    const ticket = ++renderTicketRef.current;
+
+    const token = renderGateRef.current.begin();
+    const renderBpm = bpm;
+    const renderLanes = patternRef.current.map((lane) => ({ ...lane, steps: [...lane.steps] }));
     setRendering(true);
     setMessage("RENDERING 4-BAR WAV…");
     try {
-      const output = await renderPatternBuffer(lanes, bpm, 4);
-      if (ticket !== renderTicketRef.current) return;
+      const output = await renderPatternBuffer(renderLanes, renderBpm, 4);
+      if (!mountedRef.current || !renderGateRef.current.isCurrent(token)) return;
       setRendered(output);
-      setMessage(`WAV READY — ${output.duration.toFixed(1)} SEC // PREVIEW WILL USE THIS EXACT BUFFER`);
+      setMessage(`WAV READY — ${output.duration.toFixed(1)} SEC`);
     } catch (error) {
+      if (!mountedRef.current || !renderGateRef.current.isCurrent(token)) return;
       console.error(error);
       setMessage(`ERROR — ${error instanceof Error ? error.message.toUpperCase() : "RENDER FAILED"}`);
     } finally {
-      if (ticket === renderTicketRef.current) setRendering(false);
+      if (mountedRef.current) setRendering(false);
     }
   }
 
   function exportWav() {
     if (!rendered) return;
-    downloadBlob(audioBufferToWav(rendered), `pattern-translator-resample-${bpm}bpm.wav`);
+    downloadBlob(audioBufferToWav(rendered), `chopsticks-pattern-${bpm}bpm.wav`);
   }
 
   function exportMidi() {
     const hits: DrumHit[] = [];
-    lanes.forEach((lane, laneIndex) => {
+    patternRef.current.forEach((lane, laneIndex) => {
       lane.steps.forEach((enabled, step) => {
         if (!enabled) return;
         hits.push({ id: `${lane.name}-${step}`, lane: laneIndex, beat: step / 4, time: 0, velocity: 110 });
       });
     });
     if (!hits.length) return;
-    downloadBlob(drumsMidi(hits, bpm), `pattern-translator-pattern-${bpm}bpm.mid`);
+    downloadBlob(drumsMidi(hits, bpm), `chopsticks-pattern-${bpm}bpm.mid`);
   }
 
   async function startVoiceCapture() {
@@ -395,11 +448,11 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
       const onsets = detectVoiceRhythmOnsets(mono, voiceBuffer.sampleRate);
       const activeSteps = new Set(quantizeRhythmCapture(onsets, { bpm: captureBpm, steps: STEPS }));
       if (controller.signal.aborted) throw abortError();
-      setLanes((current) => current.map((lane) => lane.name === voiceLane ? {
+      updateLanes((current) => current.map((lane) => lane.name === voiceLane ? {
         ...lane,
         steps: lane.steps.map((value, step) => value || activeSteps.has(step)),
       } : lane));
-      invalidate(`VOICE → ${voiceLane} PATTERN — ${activeSteps.size} STEPS CAPTURED`);
+      invalidateExport(`VOICE → ${voiceLane} PATTERN — ${activeSteps.size} STEPS CAPTURED`);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         if (mountedRef.current) setMessage("VOICE CAPTURE CANCELLED");
@@ -425,12 +478,12 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
     <section className="resampleWorkspace">
       <section className="module">
         <div className="moduleTitle">01 // SOURCE → AUTO SOUND KIT</div>
-        <div className="resampleIntro">Drop audio or send material from the PROJECT BIN. Broad material is analyzed for reusable transient samples; separated kick/snare/hat/tom assets load directly into their matching pad.</div>
+        <div className="resampleIntro">Drop audio or send material from the CRATE. Broad material is analyzed for reusable transient samples; separated drum assets load directly into their matching pad.</div>
 
         <div className="autoKitSource">
           <div className="autoKitReadout">
             <b>{sourceStem?.name ?? "NO SOURCE LOADED"}</b>
-            <span>{sourceStem ? "AUTO-EXTRACTION + SOURCE GRID READY AFTER ANALYSIS" : "WAV / MP3 / M4A AUDIO"}</span>
+            <span>{sourceStem ? "KIT + SOURCE GRID READY AFTER ANALYSIS" : "WAV / MP3 / M4A AUDIO"}</span>
           </div>
           <label className="processButton autoKitButton">
             <Scissors size={15} /> {extracting ? "EXTRACTING…" : sourceStem ? "RE-EXTRACT KIT" : "LOAD AUDIO"}
@@ -446,24 +499,24 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
               <b>{lane.name}</b>
               <span>{lane.file?.name ?? "NOT FOUND / NO SAMPLE"}</span>
               <label className="stemUploadButton"><Upload size={13} /> {lane.buffer ? "REPLACE" : "LOAD MANUALLY"}<input type="file" accept="audio/*" hidden onChange={(event) => { const nextFile = event.target.files?.[0]; event.currentTarget.value = ""; if (nextFile) void loadSample(lane.name, nextFile); }} /></label>
-              <button className="utilityButton" disabled={!lane.buffer} onClick={() => audition(lane.name)}><Play size={12} /> HIT</button>
+              <button className="utilityButton" disabled={!lane.buffer} onClick={() => void audition(lane.name)}><Play size={12} /> HIT</button>
             </div>
           ))}
         </div>
       </section>
 
       <section className="module">
-        <div className="moduleTitle">02 // SOURCE PATTERN → WORKING PATTERN</div>
+        <div className="moduleTitle">02 // SEQUENCER</div>
         <div className="sequencerTopbar">
-          <label className="miniControl"><span>BPM</span><DraftNumberInput value={bpm} min={40} max={240} onCommit={(value) => { setBpm(value); invalidate("BPM CHANGED — RE-EXTRACT IF SOURCE GRID LOOKS OFF"); }} ariaLabel="Resample BPM" /></label>
-          <button className="utilityButton sourcePreviewButton" disabled={!hasSourcePattern || (rendering && playingMode !== "source")} onClick={() => void togglePlayback("source")}>
+          <label className="miniControl"><span>BPM</span><DraftNumberInput value={bpm} min={40} max={240} onCommit={changeBpm} ariaLabel="Sampler BPM" /></label>
+          <button className="utilityButton sourcePreviewButton" disabled={!hasSourcePattern} onClick={() => void togglePlayback("source")}>
             {playingMode === "source" ? <Pause size={14} /> : <Play size={14} />}{playingMode === "source" ? "STOP SOURCE" : "PREVIEW SOURCE"}
           </button>
-          <button className="utilityButton" disabled={!hasSourcePattern || rendering} onClick={copySourcePattern}><Copy size={13} /> COPY SOURCE</button>
-          <button className="processButton" disabled={!loadedCount || (rendering && playingMode !== "working")} onClick={() => void togglePlayback("working")}>
-            {playingMode === "working" ? <Pause size={14} /> : <Play size={14} />}{playingMode === "working" ? "STOP" : "PREVIEW WORKING"}
+          <button className="utilityButton" disabled={!hasSourcePattern} onClick={copySourcePattern}><Copy size={13} /> COPY SOURCE</button>
+          <button className="processButton" disabled={!loadedCount} onClick={() => void togglePlayback("working")}>
+            {playingMode === "working" ? <Pause size={14} /> : <Play size={14} />}{playingMode === "working" ? "STOP LOOP" : "PREVIEW WORKING"}
           </button>
-          <button className="utilityButton" disabled={rendering} onClick={clearPattern}>CLEAR WORKING</button>
+          <button className="utilityButton" onClick={clearPattern}>CLEAR WORKING</button>
         </div>
 
         <div className="patternLegend">
@@ -475,13 +528,13 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
           <div className="stepHeader"><span />{Array.from({ length: STEPS }, (_, step) => <b key={step}>{step + 1}</b>)}</div>
           {lanes.map((lane) => (
             <div className="stepRow" key={lane.name}>
-              <button className="laneAudition" disabled={!lane.buffer} onClick={() => audition(lane.name)}>{lane.name}</button>
+              <button className="laneAudition" disabled={!lane.buffer} onClick={() => void audition(lane.name)}>{lane.name}</button>
               {lane.steps.map((enabled, step) => {
                 const sourceHit = sourcePattern[lane.name][step];
                 return (
                   <button
                     key={step}
-                    disabled={!lane.buffer || rendering}
+                    disabled={!lane.buffer}
                     aria-label={`${lane.name} step ${step + 1}${sourceHit ? ", source hit detected" : ""}`}
                     className={`stepCell ${sourceHit ? "sourceHit" : ""} ${enabled ? "on" : ""} ${currentStep === step ? "playhead" : ""}`}
                     onClick={() => toggleStep(lane.name, step)}
@@ -491,11 +544,11 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
             </div>
           ))}
         </div>
-        <div className="voiceNote sourceGridNote">Faint source markers are a visual transcription of the first detected bar, not locked steps. Click COPY SOURCE to start from it, or build a different pattern while keeping the original groove visible underneath.</div>
+        <div className="voiceNote sourceGridNote">PREVIEW WORKING is a live loop. Add or remove steps while it runs; changes are heard immediately on the next pass.</div>
       </section>
 
       <section className="module">
-        <div className="moduleTitle">03 // VOICE → PATTERN BETA</div>
+        <div className="moduleTitle">03 // VOICE → PATTERN</div>
         <div className="voiceCapture">
           <label className="miniControl"><span>VOICE TARGET</span><select value={voiceLane} disabled={voiceCaptureActive || processingVoice || rendering} onChange={(event) => setVoiceLane(event.target.value as LaneName)}>{LANES.map((lane) => <option key={lane}>{lane}</option>)}</select></label>
           <button
@@ -506,19 +559,18 @@ export function ResampleWorkspace({ routedAsset = null }: ResampleWorkspaceProps
             {voiceCaptureActive ? <Square size={14} /> : <Mic size={14} />}
             {countIn !== null ? `START IN ${countIn}` : recording ? "CANCEL CAPTURE" : processingVoice ? "ANALYZING…" : "RECORD 1 BAR"}
           </button>
-          <div className="voiceNote">One sound at a time. Follow the 4-beat visual count-in, then beatbox/tap exactly one bar. Capture auto-stops; echo cancellation, noise suppression and auto-gain are disabled when the browser allows it.</div>
+          <div className="voiceNote">Follow the 4-beat count-in, then beatbox or tap exactly one bar.</div>
         </div>
       </section>
 
       <section className="module">
-        <div className="moduleTitle">04 // PREVIEW + EXPORT</div>
+        <div className="moduleTitle">04 // EXPORT</div>
         <div className="resampleStatus">{rendering ? <><span>{message}</span><div className="progressTrack"><div className="progressBlocks" /></div></> : message}</div>
         <div className="resampleActions">
           <button className="processButton" disabled={rendering || !loadedCount} onClick={() => void buildWav()}>BUILD 4-BAR WAV</button>
           <button className="exportButton primaryExport" disabled={!rendered || rendering} onClick={exportWav}><Download size={14} /> EXPORT WAV</button>
           <button className="exportButton" disabled={rendering} onClick={exportMidi}>EXPORT MIDI</button>
         </div>
-        <div className="midiWarning">WORKING PREVIEW and WAV export use the same rendered AudioBuffer. SOURCE markers still depend on the BPM shown above; correct BPM and re-extract if the grid is shifted.</div>
       </section>
     </section>
   );

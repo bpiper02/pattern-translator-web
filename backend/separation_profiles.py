@@ -21,15 +21,18 @@ class DrumProfile:
 
 
 FULL_MIX_PROFILES = {
+    # Balanced is the normal-laptop path. The standard htdemucs model is a
+    # little less accurate than htdemucs_ft but avoids its expensive fine-tuned
+    # model bag. The service also disables shift augmentation for this model.
     "balanced": FullMixProfile(
         name="balanced",
-        broad_model=os.getenv("PT_BROAD_MODEL", "htdemucs_ft.yaml"),
+        broad_model=os.getenv("PT_BALANCED_BROAD_MODEL", "htdemucs.yaml"),
     ),
-    # HQ remix: community-curated RoFormer vocal ensemble first, then Demucs on
-    # the complementary instrumental remainder for drums/bass/other.
+    # HQ remix deliberately spends more compute: curated RoFormer vocals first,
+    # then the stronger fine-tuned Demucs broad split.
     "hq": FullMixProfile(
         name="hq",
-        broad_model=os.getenv("PT_BROAD_MODEL", "htdemucs_ft.yaml"),
+        broad_model=os.getenv("PT_HQ_BROAD_MODEL", "htdemucs_ft.yaml"),
         vocal_ensemble_preset=os.getenv("PT_VOCAL_ENSEMBLE", "vocal_balanced"),
     ),
 }

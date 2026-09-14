@@ -1,0 +1,81 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const sampler = fs.readFileSync("src/components/ResampleWorkspace.tsx", "utf8");
+const splitterClient = fs.readFileSync("src/separation/client.ts", "utf8");
+const backend = fs.readFileSync("backend/app.py", "utf8");
+const separatorService = fs.readFileSync("backend/separator_service.py", "utf8");
+const ffmpegRuntime = fs.readFileSync("backend/ffmpeg_runtime.py", "utf8");
+const devScript = fs.readFileSync("scripts/dev.mjs", "utf8");
+const backendRequirements = fs.readFileSync("backend/requirements.txt", "utf8");
+
+// SAMPLE is an instrument: working preview must read mutable pattern state on
+// every 16th rather than playing a pre-rendered four-bar buffer.
+assert.match(sampler, /scheduleRepeat/);
+assert.match(sampler, /patternRef\.current/);
+assert.match(sampler, /LIVE WORKING LOOP/);
+assert.doesNotMatch(sampler, /playPatternBuffer/);
+
+const invalidateMatch = sampler.match(/function invalidateExport[\s\S]*?\n  }/);
+assert.ok(invalidateMatch, "invalidateExport must exist");
+assert.doesNotMatch(invalidateMatch[0], /stopSequencer/);
+assert.match(invalidateMatch[0], /renderGateRef\.current\.invalidate/);
+
+const toggleStepMatch = sampler.match(/function toggleStep[\s\S]*?\n  }/);
+assert.ok(toggleStepMatch, "toggleStep must exist");
+assert.doesNotMatch(toggleStepMatch[0], /stopSequencer/);
+assert.match(toggleStepMatch[0], /invalidateExport/);
+
+// Offline WAV rendering takes an immutable snapshot. An edit during rendering
+// invalidates that render instead of publishing stale audio afterwards.
+const buildWavMatch = sampler.match(/async function buildWav[\s\S]*?\n  }/);
+assert.ok(buildWavMatch, "buildWav must exist");
+assert.match(buildWavMatch[0], /renderGateRef\.current\.begin/);
+assert.match(buildWavMatch[0], /const renderBpm = bpm/);
+assert.match(buildWavMatch[0], /const renderLanes = patternRef\.current\.map/);
+assert.match(buildWavMatch[0], /renderPatternBuffer\(renderLanes, renderBpm, 4\)/);
+assert.match(buildWavMatch[0], /renderGateRef\.current\.isCurrent/);
+
+// Vite may select 5174+ when 5173 is occupied. Local splitter CORS must not
+// hard-code one frontend port and client failures must be diagnosable.
+assert.match(backend, /allow_origin_regex/);
+assert.match(backend, /localhost\|127/);
+assert.doesNotMatch(backend, /allow_origins=\["http:\/\/localhost:5173"/);
+assert.match(splitterClient, /\/health/);
+assert.match(splitterClient, /Splitter backend unavailable/);
+
+// `npm run dev` is a full-app command. Validate the revision handshake
+// semantically instead of pinning the test to one historical revision string.
+assert.match(devScript, /SPLITTER_URL = "http:\/\/127\.0\.0\.1:8788"/);
+assert.match(devScript, /CORS_PROBE_ORIGIN = "http:\/\/localhost:5174"/);
+assert.match(devScript, /\$\{SPLITTER_URL\}\/health/);
+assert.match(devScript, /access-control-allow-origin/);
+assert.match(devScript, /health\?\.revision === EXPECTED_SPLITTER_REVISION/);
+assert.match(devScript, /backendState === "stale"/);
+assert.match(devScript, /uvicorn/);
+assert.match(devScript, /vite/);
+assert.match(backend, /"revision": API_REVISION/);
+
+const devRevision = devScript.match(/EXPECTED_SPLITTER_REVISION = "([^"]+)"/)?.[1];
+const backendRevision = backend.match(/API_REVISION = "([^"]+)"/)?.[1];
+assert.ok(devRevision, "dev launcher must declare an expected splitter revision");
+assert.ok(backendRevision, "backend must declare an API revision");
+assert.equal(devRevision, backendRevision, "launcher/backend splitter revisions must match");
+
+// The launcher must validate the actual Separator import chain, not merely the
+// top-level package. Known upstream runtime holes are pinned explicitly, and a
+// local FFmpeg binary must be provisioned before audio-separator is constructed.
+assert.match(devScript, /from backend\.ffmpeg_runtime import ensure_ffmpeg_runtime/);
+assert.match(devScript, /ffmpeg_exe = ensure_ffmpeg_runtime\(\)/);
+assert.match(devScript, /from audio_separator\.separator import Separator/);
+assert.match(devScript, /import fastapi, uvicorn, numpy, soundfile, drumsep, audioread, subprocess/);
+assert.match(devScript, /EXPECTED_AUDIO_SEPARATOR = "0\.47\.0"/);
+assert.match(devScript, /version\('audio-separator'\)/);
+assert.match(backendRequirements, /^audio-separator\[cpu\]==0\.47\.0$/m);
+assert.match(backendRequirements, /^audioread==3\.1\.0$/m);
+assert.match(backendRequirements, /^imageio-ffmpeg==0\.6\.0$/m);
+assert.match(separatorService, /ensure_ffmpeg_runtime\(\)/);
+assert.match(ffmpegRuntime, /imageio_ffmpeg\.get_ffmpeg_exe\(\)/);
+assert.match(ffmpegRuntime, /shutil\.which\("ffmpeg"\)/);
+
+console.log("RUNTIME WORKFLOW REGRESSION: PASS");

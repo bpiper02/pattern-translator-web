@@ -1,0 +1,52 @@
+.machineFooter{display:none!important}
+
+.statusTag{font-size:0!important}
+.statusTag::after{content:"LOCAL / PRIVATE";font:700 9px "Courier New",monospace;letter-spacing:.08em}
+
+.modeModule>.moduleTitle,
+.sourceModule>.moduleTitle,
+.translateModule>.moduleTitle,
+.stemEditorModule>.moduleTitle,
+.splitWorkspace>.module:first-child>.moduleTitle,
+.splitDrumAction>.moduleTitle,
+.resampleWorkspace>.module>.moduleTitle,
+.patternModule>.moduleTitle{font-size:0!important}
+
+.modeModule>.moduleTitle::after{content:"TRANSFORM TYPE";font-size:10px}
+.sourceModule>.moduleTitle::after{content:"SOURCE";font-size:10px}
+.translateModule>.moduleTitle::after{content:"TARGET";font-size:10px}
+.stemEditorModule>.moduleTitle::after{content:"EDIT MIX";font-size:10px}
+.splitWorkspace>.module:first-child>.moduleTitle::after{content:"SPLIT";font-size:10px}
+.splitDrumAction>.moduleTitle::after{content:"DRUM SUB-SPLIT";font-size:10px}
+.resampleWorkspace>.module:nth-of-type(1)>.moduleTitle::after{content:"SOUND KIT";font-size:10px}
+.resampleWorkspace>.module:nth-of-type(2)>.moduleTitle::after{content:"SEQUENCER";font-size:10px}
+.resampleWorkspace>.module:nth-of-type(3)>.moduleTitle::after{content:"VOICE → PATTERN";font-size:10px}
+.resampleWorkspace>.module:nth-of-type(4)>.moduleTitle::after{content:"EXPORT";font-size:10px}
+.patternModule:has(.voiceMidiSetup)>.moduleTitle::after{content:"VOICE → MIDI";font-size:10px}
+.patternModule:not(:has(.voiceMidiSetup))>.moduleTitle::after{content:"OUTPUT";font-size:10px}
+
+.splitWorkspace .resampleIntro,
+.stemEditorIntro,
+.resampleWorkspace>.module:first-child .resampleIntro{font-size:0!important;line-height:1.45}
+.splitWorkspace .resampleIntro::after{content:"Split a song into broad stems, or split drum audio into individual drum parts.";font:10px/1.45 "Courier New",monospace}
+.stemEditorIntro::after{content:"Load stems, shape the layers, preview the mix, then export one WAV.";font:10px/1.45 "Courier New",monospace}
+.resampleWorkspace>.module:first-child .resampleIntro::after{content:"Build a playable kit from audio or load one-shots directly into pads.";font:10px/1.45 "Courier New",monospace}
+
+.translateModule .midiWarning,
+.resampleWorkspace .midiWarning,
+.splitDrumAction .midiWarning,
+.patternModule:has(.voiceMidiSetup) .midiWarning{font-size:0!important;line-height:1.45}
+.translateModule .midiWarning::after{content:"Whole mixes can smear key changes. Split stems first for cleaner transforms.";font:9px/1.45 "Courier New",monospace}
+.resampleWorkspace .midiWarning::after{content:"Working preview and WAV export use the same rendered audio.";font:9px/1.45 "Courier New",monospace}
+.splitDrumAction .midiWarning::after{content:"Split the detected drums into kick, snare, hats, cymbals and toms.";font:9px/1.45 "Courier New",monospace}
+.patternModule:has(.voiceMidiSetup) .midiWarning::after{content:"ONE BAR · HUM OR SING · ONE NOTE AT A TIME";font:9px/1.45 "Courier New",monospace;letter-spacing:.04em}
+
+.resampleWorkspace .sourceGridNote{font-size:0!important}
+.resampleWorkspace .sourceGridNote::after{content:"Faint markers show the detected source groove. Copy it to edit, or build your own pattern over it.";font:9px/1.45 "Courier New",monospace}
+
+.splitQualityRow small{color:#827c78!important;font-size:9px!important}
+.voiceNote{color:#918b87!important}
+
+@media(max-width:560px){
+  .splitWorkspace .resampleIntro::after,.stemEditorIntro::after,.resampleWorkspace>.module:first-child .resampleIntro::after{font-size:9px}
+}
