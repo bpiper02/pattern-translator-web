@@ -148,7 +148,7 @@ jobs:
 
       - name: Backend Python syntax regression
         if: github.ref_name == 'feat/split-asset-bin' || github.ref_name == 'feat/chopsticks-integration-qa' || github.ref_name == 'feat/chopsticks-ui-overhaul'
-        run: python -m py_compile backend/app.py backend/job_storage.py backend/separation_profiles.py backend/benchmark_split.py
+        run: python -m py_compile backend/app.py backend/job_storage.py backend/runtime_tools.py backend/separation_profiles.py backend/benchmark_split.py
 
       - name: Corrected melody bakeoff v2
         if: github.ref_name == 'spike/melody-transcription-bakeoff'
