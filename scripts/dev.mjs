@@ -6,7 +6,7 @@ const root = process.cwd();
 const isWindows = process.platform === "win32";
 const SPLITTER_URL = "http://127.0.0.1:8788";
 const CORS_PROBE_ORIGIN = "http://localhost:5174";
-const EXPECTED_SPLITTER_REVISION = "split-runtime-v2";
+const EXPECTED_SPLITTER_REVISION = "split-runtime-v3-python-api";
 const RECOMMENDED_PYTHON = "3.12";
 const MAX_SUPPORTED_PYTHON_MINOR = 13;
 const venvPython = path.join(
@@ -165,8 +165,6 @@ if (!existsSync(viteEntry)) {
   console.error("CHOPSTICKS DEV: Vite is not installed. Run `npm install` and try again.");
   shutdown(1);
 } else {
-  // Launch Vite with the current Node executable instead of npx.cmd. On
-  // Windows + Node 24, spawning .cmd shims with shell:false can throw EINVAL.
   console.log("CHOPSTICKS DEV: starting Vite frontend");
   launch(process.execPath, [viteEntry], "Vite frontend");
 }
